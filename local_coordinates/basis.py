@@ -14,19 +14,20 @@ class BasisVectors(AbstractBatchableObject):
   A set of basis vectors for a tangent space. The basis vectors are always written
   in the standard basis of Euclidean coordinates.
   """
-  _jet: Jet
+  p: Float[Array, "N"]
+  components: Annotated[Jet, "N D"] # Contains a matrix of Jets, each of which represents a single component
 
-  @property
-  def p(self) -> Array:
-    return self._jet.value
+  def __check_init__(self):
+    if self.components.ndim != self.p.ndim + 1:
+      raise ValueError(f"Invalid number of dimensions: {self.components.ndim}")
 
   @property
   def basis_vectors(self) -> Array:
-    return self._jet.gradient
+    return self.components.value
 
   @property
-  def second_derivatives(self) -> Array:
-    return self._jet.hessian
+  def second_derivatives(self) -> Optional[Array]:
+    return self.components.gradient
 
   @property
   def batch_size(self) -> Union[None,int,Tuple[int]]:
@@ -60,8 +61,8 @@ def make_coordinate_basis(basis: BasisVectors) -> BasisVectors:
   projected onto the symmetric part.
   """
   p = basis.p
-  frame = basis.basis_vectors
-  dframe_dx = basis.second_derivatives
+  frame = basis.components.value
+  dframe_dx = basis.components.gradient
 
   if dframe_dx is None:
     raise ValueError(
@@ -70,9 +71,9 @@ def make_coordinate_basis(basis: BasisVectors) -> BasisVectors:
     )
 
   # Create a new Jet with the original point and frame, but new derivatives.
-  new_jet = Jet(value=p, gradient=frame, hessian=0.5*(dframe_dx + jnp.swapaxes(dframe_dx, -2, -1)))
+  new_jet = Jet(value=frame, gradient=0.5*(dframe_dx + jnp.swapaxes(dframe_dx, -2, -1)), hessian=None)
 
-  return BasisVectors(_jet=new_jet)
+  return BasisVectors(p=p, components=new_jet)
 
 @dispatch.abstract
 def change_basis(obj: Any, target_basis: BasisVectors) -> Any:

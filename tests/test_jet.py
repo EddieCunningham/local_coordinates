@@ -928,3 +928,147 @@ def test_jet_decorator_empty_pytree_components():
 
     assert jnp.allclose(output_jet.value, 10.0)
     assert jnp.allclose(output_jet.gradient, jnp.array([2.0, 4.0]))
+
+
+def test_jet_decorator_unused_jet_with_none_derivatives():
+    """
+    Tests that if a Jet argument with None derivatives is not used in the
+    computation, the output Jet still computes derivatives based on the
+    used Jet arguments.
+    """
+    @jet_decorator
+    def g(x, y):
+        # y is not used
+        return x * 2
+
+    jet_x = Jet(
+        value=jnp.array(2.0),
+        gradient=jnp.array([1.0]),
+        hessian=jnp.array([[0.0]]),
+    )
+
+    # y has no derivatives, but is not used in computation
+    jet_y = Jet(
+        value=jnp.array(3.0),
+        gradient=None,
+        hessian=None,
+    )
+
+    out = g(jet_x, jet_y)
+
+    assert jnp.allclose(out.value, 4.0)
+    assert out.gradient is not None
+    assert jnp.allclose(out.gradient, jnp.array([2.0]))
+    assert out.hessian is not None
+    assert jnp.allclose(out.hessian, jnp.array([[0.0]]))
+
+
+def test_jet_decorator_three_args_selective_derivatives():
+    """
+    Two used args (x, y) and one unused (z). x has grad+hess, y has grad only,
+    z has no derivatives. Expect gradient computed, hessian omitted.
+    """
+    @jet_decorator
+    def g(x, y, z):
+        return x + 2*y  # z unused
+
+    x = Jet(value=jnp.array(1.5), gradient=jnp.array([1.0]), hessian=jnp.array([[0.0]]))
+    y = Jet(value=jnp.array(-0.5), gradient=jnp.array([1.0]), hessian=None)
+    z = Jet(value=jnp.array(7.0), gradient=None, hessian=None)
+
+    out = g(x, y, z)
+
+    # value = 1.5 + 2*(-0.5) = 0.5
+    assert jnp.allclose(out.value, 0.5)
+    # gradient over [x, y] coordinates should be [1, 2]
+    assert jnp.allclose(out.gradient, jnp.array([1.0, 2.0]))
+    # y lacks hessian, so overall hessian should be None
+    assert out.hessian is None
+
+
+def test_jet_decorator_unused_pytree_of_jets_argument():
+    """
+    extras is a PyTree of Jets without derivatives, but unused. Ensure full
+    derivatives flow from the used scalar Jet only.
+    """
+    @jet_decorator
+    def g(a, extras):
+        return a**2
+
+    a = function_to_jet(lambda t: t, jnp.array(3.0))
+
+    extras = {
+        'u': Jet(value=jnp.array(10.0), gradient=None, hessian=None),
+        'v': Jet(value=jnp.array(20.0), gradient=None, hessian=None),
+    }
+
+    out = g(a, extras)
+
+    assert jnp.allclose(out.value, 9.0)
+    assert jnp.allclose(out.gradient, jnp.array([6.0]))
+    assert jnp.allclose(out.hessian, jnp.array([[2.0]]))
+
+
+def test_jet_decorator_annotated_params_with_unused():
+    """
+    Test annotated Jet parameters where one param is unused. Ensure derivatives
+    are computed from the used Jet parameter.
+    """
+    @jet_decorator
+    def cubic(jx: Jet, jy: Jet):
+        # Use only jx
+        return jx.value**3
+
+    t = 1.5
+    jx = function_to_jet(lambda x: x, jnp.array(t))
+    jy = function_to_jet(lambda x: x, jnp.array(2.0))  # unused
+
+    out = cubic(jx, jy)
+
+    expected_val = t**3
+    expected_grad = 3 * t**2  # d/dt x^3
+    expected_hess = 6 * t     # d^2/dt^2 x^3
+
+    assert jnp.allclose(out.value, expected_val)
+    assert jnp.allclose(out.gradient, jnp.array([expected_grad]))
+    assert jnp.allclose(out.hessian, jnp.array([[expected_hess]]))
+
+
+def test_jet_decorator_partial_use_within_pytree_valued_jet():
+    """
+    Single Jet with PyTree-valued fields; function uses only one field. Ensure
+    output derivatives match those of the used field only.
+    """
+    @jet_decorator
+    def use_only_a(x):
+        return x['a']
+
+    input_jet = Jet(
+        value={'a': jnp.array(2.0), 'b': jnp.array(5.0)},
+        gradient={'a': jnp.array([3.0]), 'b': jnp.array([7.0])},
+        hessian={'a': jnp.array([[11.0]]), 'b': jnp.array([[13.0]])},
+    )
+
+    out = use_only_a(input_jet)
+
+    assert jnp.allclose(out.value, 2.0)
+    assert jnp.allclose(out.gradient, jnp.array([3.0]))
+    assert jnp.allclose(out.hessian, jnp.array([[11.0]]))
+
+
+def test_jet_decorator_used_group_without_gradient():
+    """
+    If a used argument group lacks gradients, no derivatives should be returned.
+    """
+    @jet_decorator
+    def g(x, y):
+        return y + 1.0  # depends only on y
+
+    x = Jet(value=jnp.array(2.0), gradient=jnp.array([1.0]), hessian=jnp.array([[0.0]]))
+    y = Jet(value=jnp.array(3.0), gradient=None, hessian=None)
+
+    out = g(x, y)
+
+    assert jnp.allclose(out.value, 4.0)
+    assert out.gradient is None
+    assert out.hessian is None

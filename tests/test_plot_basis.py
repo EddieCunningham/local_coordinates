@@ -16,8 +16,8 @@ def test_plot_coordinate_grid_identity_basis(tmp_path):
   p = jnp.array([1.0, 2.0])
   frame = jnp.eye(2)
   hessian = jnp.zeros((2, 2, 2))
-  jet = Jet(value=p, gradient=frame, hessian=hessian)
-  basis = BasisVectors(_jet=jet)
+  components_jet = Jet(value=frame, gradient=hessian, hessian=None)
+  basis = BasisVectors(p=p, components=components_jet)
 
   savepath = tmp_path / 'grid_identity.png'
   fig, ax = plot_coordinate_grid(basis, num=11, span=1.0, savepath=str(savepath), title='identity')
@@ -41,8 +41,8 @@ def test_plot_coordinate_grid_chart_based_basis(tmp_path):
   # Convert to convention (i, j, k) = d(E_j)^i / du^k
   hessian = jnp.transpose(H_kji, (2, 1, 0))
 
-  jet = Jet(value=p, gradient=frame, hessian=hessian)
-  basis = BasisVectors(_jet=jet)
+  components_jet = Jet(value=frame, gradient=hessian, hessian=None)
+  basis = BasisVectors(p=p, components=components_jet)
 
   savepath = tmp_path / 'grid_polar.png'
   fig, ax = plot_coordinate_grid(basis, num=9, span=1.05, savepath=str(savepath), title='polar')
@@ -66,8 +66,8 @@ def test_plot_coordinate_grid_random_basis(tmp_path):
   # Non-symmetric random hessian (i, j, k)
   H = jax.random.normal(jax.random.split(key)[1], (2, 2, 2))
 
-  jet = Jet(value=p, gradient=frame, hessian=H)
-  basis = BasisVectors(_jet=jet)
+  components_jet = Jet(value=frame, gradient=H, hessian=None)
+  basis = BasisVectors(p=p, components=components_jet)
 
   savepath = tmp_path / 'grid_random.png'
   fig, ax = plot_coordinate_grid(basis, num=7, span=1.0, savepath=str(savepath), title='random')
@@ -83,8 +83,8 @@ def test_plot_coordinate_grid_random_basis_after_make_coordinate_basis(tmp_path)
   frame = _random_invertible_frame_2x2(jax.random.split(key)[0])
   H = jax.random.normal(jax.random.split(key)[1], (2, 2, 2))
 
-  jet = Jet(value=p, gradient=frame, hessian=H)
-  basis = BasisVectors(_jet=jet)
+  components_jet = Jet(value=frame, gradient=H, hessian=None)
+  basis = BasisVectors(p=p, components=components_jet)
 
   basis_coord = make_coordinate_basis(basis)
   # Invariants: same point and frame

@@ -22,7 +22,11 @@ def plot_coordinate_grid(
   - Varies the first two tangent coordinates (others fixed to 0).
   - If ambient output has >2 components, only the first two are plotted.
   """
-  jet: Jet = basis._jet
+  jet: Jet = Jet(
+      value=basis.p,
+      gradient=basis.basis_vectors,
+      hessian=basis.second_derivatives,
+  )
 
   # Infer input dim from a gradient leaf
   grad_leaves = jtu.tree_leaves(jet.gradient)

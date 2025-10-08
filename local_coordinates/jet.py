@@ -55,6 +55,10 @@ class Jet(AbstractBatchableObject):
     return self.value.shape
 
   @property
+  def ndim(self) -> int:
+    return self.value.ndim
+
+  @property
   def batch_size(self) -> Union[None,int,Tuple[int]]:
     f = self.value
     if f.ndim == 0:
@@ -280,63 +284,86 @@ def jet_decorator(f: Callable) -> Callable:
     # Collect Jets, but group them by argument (to handle PyTrees of Jets correctly)
     # Each arg might be a Jet, a PyTree of Jets, or a regular value
     arg_jet_groups = []
-    for arg in args:
+    group_arg_positions: List[int] = []
+    for arg_idx, arg in enumerate(args):
       jets_in_arg = [x for x in jtu.tree_leaves(arg, is_leaf=_is_jet) if _is_jet(x)]
       if jets_in_arg:
         arg_jet_groups.append(jets_in_arg)
+        group_arg_positions.append(arg_idx)
 
     if not arg_jet_groups:
       return f(*args, **kwargs)
 
-    # Flatten for checking None status (all Jets share gradient/hessian status)
-    jet_leaves = [j for group in arg_jet_groups for j in group]
+    # Determine which argument groups are actually used by f by probing with JVP
+    # along primals directions for each group's argument subtree.
+    f_primals = lambda a: f(*a, **kwargs)
+    primals_per_arg = primals if isinstance(primals, tuple) else (primals,)
 
-    # Check if all jets share the same basis.
-    # The basis is no longer stored in the Jet object, so we can't check it here.
-    # This part of the logic needs to be re-evaluated or removed if basis is no longer tracked.
-    # For now, we'll assume all Jets are compatible or raise an error if not.
-    # The original code had a check for `jet.basis` which is removed.
-    # If the intent was to remove the basis check entirely, this block should be removed.
-    # Given the new_code, the `basis` attribute is removed from `Jet`.
-    # The `jet_decorator` and `_extract_coordinate_system` functions are also removed.
-    # This means the `jet_decorator` will now always raise an error if `Jet` is used.
-    # The `_extract_coordinate_system` was only called by `_get_coordinate_dim`.
-    # Since `_get_coordinate_dim` is no longer used, this block is effectively removed.
+    # Helpers to build tangents matching a primals subtree, handling None leaves
+    def make_tangent_like(subtree, fill: str):
+      def map_leaf(v):
+        if v is None:
+          return None
+        va = jnp.asarray(v)
+        return jnp.ones_like(va) if fill == 'ones' else jnp.zeros_like(va)
+      return jtu.tree_map(map_leaf, subtree, is_leaf=lambda x: x is None)
 
-    has_gradient = all(j.gradient is not None for j in jet_leaves)
-    has_hessian = all(j.hessian is not None for j in jet_leaves)
+    used_groups: List[bool] = []
+    for group_idx, arg_pos in enumerate(group_arg_positions):
+      tangents_per_arg = []
+      for idx in range(len(primals_per_arg)):
+        if idx == arg_pos:
+          # Ones for Jet-originated leaves in this argument; zeros elsewhere
+          def per_leaf(a, p):
+            if _is_jet(a):
+              return make_tangent_like(p, 'ones')
+            else:
+              return make_tangent_like(p, 'zeros')
+          t_arg = jtu.tree_map(per_leaf, args[idx], primals_per_arg[idx], is_leaf=_is_jet)
+        else:
+          t_arg = make_tangent_like(primals_per_arg[idx], 'zeros')
+        tangents_per_arg.append(t_arg)
 
-    # If no gradients available, just compute the value
-    if not has_gradient:
+      tangents = tuple(tangents_per_arg) if isinstance(primals, tuple) else tangents_per_arg[0]
+      sensitivity = jax.jvp(f_primals, (primals,), (tangents,))[1]
+      leaves = jtu.tree_leaves(sensitivity)
+      is_used = any(bool(jnp.any(jnp.asarray(leaf))) for leaf in leaves) if leaves else False
+      used_groups.append(is_used)
+
+    # Per-group derivative availability
+    group_has_grad = [all(j.gradient is not None for j in group) for group in arg_jet_groups]
+    group_has_hess = [all(j.hessian is not None for j in group) for group in arg_jet_groups]
+
+    # If any used group lacks gradients, we cannot compute derivatives safely
+    if any(used and (not has_g) for used, has_g in zip(used_groups, group_has_grad)):
       value = f(*primals, **kwargs) if isinstance(primals, tuple) else f(primals)
       if isinstance(value, (dict, list, tuple)):
-        return jtu.tree_map(
-          lambda v: Jet(value=v, gradient=None, hessian=None),
-          value
-        )
+        return jtu.tree_map(lambda v: Jet(value=v, gradient=None, hessian=None), value)
       else:
         return Jet(value=value, gradient=None, hessian=None)
 
-    # Determine the total coordinate dimension (R) by summing dimensions of all Jet ARGUMENTS.
-    # Jets within the same PyTree argument share coordinates, so we only count each arg group once.
-    sizes = [_get_coordinate_dim(group[0].gradient) for group in arg_jet_groups]
+    # Active groups are used and have gradients
+    active_group_indices = [i for i, used in enumerate(used_groups) if used]
+
+    # Determine the total coordinate dimension (R) by summing dimensions of active Jet ARGUMENTS.
+    sizes = [_get_coordinate_dim(arg_jet_groups[i][0].gradient) for i in active_group_indices]
     offsets = [sum(sizes[:i]) for i in range(len(sizes))]
     R = sum(sizes)
 
-    # Create a mapping from Jet id to its group index (for padding logic)
-    jet_to_group = {}
-    for group_idx, group in enumerate(arg_jet_groups):
-      for jet in group:
-        jet_to_group[id(jet)] = group_idx
+    # Create a mapping from Jet id to its active group-local index (for padding logic)
+    jet_to_active_group = {}
+    for active_idx, group_idx in enumerate(active_group_indices):
+      for jet in arg_jet_groups[group_idx]:
+        jet_to_active_group[id(jet)] = active_idx
 
     # 2. TANGENT CONSTRUCTION: Create unified tangent PyTrees for gradients and Hessians.
     # Each tangent has a final axis (or two for Hessians) of size R, where each
     # Jet's derivatives are placed in a unique slice, padded with zeros.
 
     def grad_mapper(x):
-      if _is_jet(x):
-        group_idx = jet_to_group[id(x)]
-        m, before = sizes[group_idx], offsets[group_idx]
+      if _is_jet(x) and (id(x) in jet_to_active_group):
+        active_idx = jet_to_active_group[id(x)]
+        m, before = sizes[active_idx], offsets[active_idx]
         after = R - before - m
 
         g = x.gradient
@@ -347,17 +374,28 @@ def jet_decorator(f: Callable) -> Callable:
           return jnp.concatenate([zb_g, leaf, za_g], axis=-1)
         return jtu.tree_map(pad_leaf, g)
       else:
-        # Non-Jet leaves get zero tangents.
-        vx = jnp.asarray(x)
-        return jnp.zeros((*vx.shape, R), dtype=vx.dtype)
+        # Non-Jet leaves and inactive Jets get zero tangents.
+        if _is_jet(x):
+          return jtu.tree_map(
+            lambda leaf: jnp.zeros((*leaf.shape, R), dtype=leaf.dtype),
+            x.value,
+          )
+        else:
+          vx = jnp.asarray(x)
+          return jnp.zeros((*vx.shape, R), dtype=vx.dtype)
 
     total_grad_tangent = jtu.tree_map(grad_mapper, args, is_leaf=_is_jet)
 
-    if has_hessian:
+    # Hessian is only computable if all used groups have Hessians
+    hessian_possible = all(
+      (not used) or has_h for used, has_h in zip(used_groups, group_has_hess)
+    ) and len(active_group_indices) > 0
+
+    if hessian_possible:
       def hess_mapper(x):
-        if _is_jet(x):
-          group_idx = jet_to_group[id(x)]
-          m, before = sizes[group_idx], offsets[group_idx]
+        if _is_jet(x) and (id(x) in jet_to_active_group) and (x.hessian is not None):
+          active_idx = jet_to_active_group[id(x)]
+          m, before = sizes[active_idx], offsets[active_idx]
           after = R - before - m
 
           H = x.hessian
@@ -374,8 +412,14 @@ def jet_decorator(f: Callable) -> Callable:
             return jnp.concatenate([zb_h_rows, H_cols, za_h_rows], axis=-2)
           return jtu.tree_map(pad_leaf, H)
         else:
-          vx = jnp.asarray(x)
-          return jnp.zeros((*vx.shape, R, R), dtype=vx.dtype)
+          if _is_jet(x):
+            return jtu.tree_map(
+              lambda leaf: jnp.zeros((*leaf.shape, R, R), dtype=leaf.dtype),
+              x.value,
+            )
+          else:
+            vx = jnp.asarray(x)
+            return jnp.zeros((*vx.shape, R, R), dtype=vx.dtype)
 
       total_hess_tangent = jtu.tree_map(hess_mapper, args, is_leaf=_is_jet)
 
@@ -384,7 +428,7 @@ def jet_decorator(f: Callable) -> Callable:
 
     gradient = _compute_gradient(f_primals, primals, total_grad_tangent)
 
-    if has_hessian:
+    if hessian_possible:
       transport = _compute_transport_term(f_primals, primals, total_hess_tangent)
       intrinsic = _compute_intrinsic_term(f_primals, primals, total_grad_tangent)
       hessian = jtu.tree_map(jnp.add, transport, intrinsic)
