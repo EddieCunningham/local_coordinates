@@ -8,6 +8,7 @@ from jaxtyping import Array, Float, PRNGKeyArray
 from linsdex import AbstractBatchableObject
 from plum import dispatch
 from local_coordinates.jet import Jet
+from local_coordinates.jet import jet_decorator
 
 class BasisVectors(AbstractBatchableObject):
   """
@@ -18,6 +19,7 @@ class BasisVectors(AbstractBatchableObject):
   components: Annotated[Jet, "N D"] # Contains a matrix of Jets, each of which represents a single component
 
   def __check_init__(self):
+    assert isinstance(self.components, Jet), "components must be a Jet"
     if self.components.ndim != self.p.ndim + 1:
       raise ValueError(f"Invalid number of dimensions: {self.components.ndim}")
 
@@ -40,12 +42,16 @@ class BasisVectors(AbstractBatchableObject):
     else:
       raise ValueError(f"Invalid number of dimensions: {self.p.ndim}")
 
-def get_basis_transform(from_basis: BasisVectors, to_basis: BasisVectors) -> Callable[[Array], Array]:
+def get_basis_transform(from_basis: BasisVectors, to_basis: BasisVectors) -> Jet:
   """
   Get the transformation matrix from one set of basis vectors to another.
   """
-  inverse_to_basis_vectors = jnp.linalg.inv(to_basis.basis_vectors)
-  return inverse_to_basis_vectors @ from_basis.basis_vectors
+  @jet_decorator
+  def get_components(from_components: Jet, to_components: Jet) -> Array:
+    return jnp.linalg.solve(to_components.value, from_components.value)
+
+  new_components: Jet = get_components(from_basis.components, to_basis.components)
+  return new_components
 
 def make_coordinate_basis(basis: BasisVectors) -> BasisVectors:
   """
@@ -81,3 +87,26 @@ def change_basis(obj: Any, target_basis: BasisVectors) -> Any:
   Change the basis of an object to a new basis.
   """
   pass
+
+
+def get_mixing_function(basis: BasisVectors) -> Callable[[Float[Array, "D"]], Float[Array, "N"]]:
+    """
+    Creates a callable mixing function from a BasisVectors object.
+
+    The returned function implements the second-order Taylor approximation of the
+    coordinate system defined by the basis, transforming a displacement vector `dx` from
+    the local tangent space to a point in the ambient space.
+    """
+    # The Jet's value is the base point `p`. The first derivative (gradient)
+    # is given by the basis vectors themselves, and the second derivative (hessian)
+    # is given by the gradient of the basis vector components.
+    transform_jet = Jet(
+        value=basis.p,
+        gradient=basis.components.value,
+        hessian=basis.components.gradient
+    )
+
+    def mixing_function(dx: Float[Array, "D"]) -> Float[Array, "N"]:
+        return transform_jet(dx)
+
+    return mixing_function

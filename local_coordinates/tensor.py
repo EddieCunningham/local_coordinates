@@ -66,11 +66,12 @@ class Tensor(AbstractBatchableObject):
   """
   A Tensor is a collection of arrays, each representing a different tensor.
   """
-  tensor_type: TensorType
+  tensor_type: TensorType = eqx.field(static=True)
   basis: BasisVectors
   components: Annotated[Jet, "... D"] # The components of the tensor written in the chosen basis
 
   def __check_init__(self):
+    assert isinstance(self.components, Jet), "components must be a Jet"
     if self.components.ndim < self.tensor_type.total_dims():
       raise ValueError(f"Invalid number of dimensions: {self.components.ndim}")
 
@@ -90,13 +91,17 @@ class Tensor(AbstractBatchableObject):
     else:
       raise ValueError(f"Invalid number of dimensions: {self.components.ndim}")
 
+@jet_decorator
+def function_multiply_tensor(T: Tensor, f: Jet) -> Jet:
+  return T.components.value * f.value
+
 @dispatch
 def change_coordinates(tensor: Tensor, new_basis: BasisVectors) -> Tensor:
   """
   Transform a tensor from one basis to another.
   """
   T = get_basis_transform(tensor.basis, new_basis)
-  Tinv = jnp.linalg.inv(T)
+  Tinv = jnp.linalg.inv(T.value)
 
   k = tensor.tensor_type.k
   l = tensor.tensor_type.l
@@ -132,7 +137,7 @@ def change_coordinates(tensor: Tensor, new_basis: BasisVectors) -> Tensor:
   l_output_indices = output_indices[k:k+l]
   for i in range(l):
     transforms_str_parts.append(f"{l_output_indices[i]}{l_input_indices[i]}")
-    transforms.append(T)
+    transforms.append(T.value)
 
   output_tensor_str = f"...{output_indices}"
 

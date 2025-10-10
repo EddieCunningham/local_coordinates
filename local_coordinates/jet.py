@@ -13,8 +13,73 @@ import inspect
 
 class Jet(AbstractBatchableObject):
   """
-  A Jet is a Scalar valued function as well as its derivatives at a point.
-  The derivatives are always expressed in standard Euclidean coordinates.
+  Real-valued function and its derivatives at a single expansion point.
+
+  A `Jet` stores the value of a function, together with its first and second
+  derivatives (when available), all evaluated at the same input point in a
+  fixed Euclidean coordinate system. The container supports both scalar/array
+  values and general PyTrees of arrays; in the PyTree case, `gradient` and
+  `hessian` must have the same PyTree structure as `value`.
+
+  Components
+  - value:
+      PyTree of JAX arrays (or a single array/scalar). Represents f(x).
+  - gradient:
+      Optional PyTree mirroring `value`. Each gradient leaf has shape
+      value_leaf.shape + (R,), where R is the coordinate dimension. The last
+      axis indexes the coordinate directions of the input space.
+  - hessian:
+      Optional PyTree mirroring `value`. Each hessian leaf has shape
+      value_leaf.shape + (R, R). The last two axes index coordinate directions.
+
+  Coordinate dimension R
+  - R is inferred from the trailing axis of gradient leaves (or from Hessian
+    if gradient is absent). All leaves must agree on R.
+
+  Batching semantics
+  - Any leading axes of a value leaf are treated as batch/shape axes that are
+    shared by gradient/hessian leaves. The `batch_size` property reports the
+    leading shape of `value` for convenience: None for scalars, an int for 1D,
+    or a tuple for higher rank.
+
+  Taylor evaluation
+  - Calling a Jet as `jet(dx)` evaluates the Taylor approximation at the
+    displacement `dx` (a 1D array of shape (R,)):
+      - 0th order if `gradient` is None ⇒ returns `value`
+      - 1st order if `gradient` present and `hessian` is None
+      - 2nd order if both `gradient` and `hessian` are present
+
+  Structure invariants
+  - If provided, `gradient` and `hessian` must be PyTrees with the exact same
+    structure as `value`.
+  - For each corresponding leaf pair (v, g) and (v, H):
+      g.ndim == v.ndim + 1 and H.ndim == v.ndim + 2
+
+  Construction
+  - From a function: use `function_to_jet(f, x)` to construct a Jet (or PyTree
+    of Jets) by differentiating `f` at input `x`.
+  - Manual construction is also supported as long as the above invariants hold.
+
+  Notes
+  - Gradients and Hessians are always expressed in standard Euclidean
+    coordinates; no basis object is stored in the Jet.
+  - It is valid to have `gradient` present while `hessian` is None. If
+    `gradient` is None, `hessian` is ignored by evaluation.
+
+  Examples
+  >>> import jax.numpy as jnp
+  >>> from local_coordinates.jet import function_to_jet
+  >>> f = lambda x: jnp.array([x[0]**2, jnp.sin(x[1])])
+  >>> x0 = jnp.array([1.0, 0.5])
+  >>> j = function_to_jet(f, x0)
+  >>> j.value.shape
+  (2,)
+  >>> j.gradient.shape  # Jacobian: (out_dim, R)
+  (2, 2)
+  >>> j.hessian.shape   # per-output Hessian stacked along output dim
+  (2, 2, 2)
+  >>> dx = jnp.array([0.1, -0.2])
+  >>> approx = j(dx)  # 2nd-order Taylor if hessian available
   """
   value: Scalar
   gradient: Optional[Float[Array, "N"]]
@@ -106,6 +171,49 @@ class Jet(AbstractBatchableObject):
 
     return jtu.tree_map(jnp.add, linear_approx, quadratic_correction)
 
+  def __neg__(self):
+    return Jet(
+      value=-self.value,
+      gradient=-self.gradient,
+      hessian=-self.hessian
+    )
+
+  def __sub__(self, other):
+    return self + (-other)
+
+  def __add__(self, other):
+    """Adds another Jet or a scalar/array to this Jet."""
+    if not isinstance(other, Jet):
+      # Adding a constant, derivatives are unchanged
+      return Jet(
+        value=jtu.tree_map(lambda x: x + other, self.value),
+        gradient=self.gradient,
+        hessian=self.hessian
+      )
+
+    @jet_decorator
+    def _add(x, y):
+      return x + y
+
+    return _add(self, other)
+
+  def __radd__(self, other):
+    return self.__add__(other)
+
+  def __rmul__(self, other: Scalar):
+    """Multiplies this Jet by a scalar."""
+    assert isinstance(other, Scalar), "Jet can only be right-multiplied by a scalar"
+
+    # Scalar multiplication
+    return Jet(
+        value=jtu.tree_map(lambda x: x * other, self.value),
+        gradient=jtu.tree_map(lambda x: x * other, self.gradient) if self.gradient is not None else None,
+        hessian=jtu.tree_map(lambda x: x * other, self.hessian) if self.hessian is not None else None
+    )
+
+  def __mul__(self, other):
+    raise TypeError("Jet can only be right-multiplied by a scalar")
+
 
 def function_to_jet(f: Callable[[Array], Any], x: Array) -> Jet:
   """Return a PyTree of Jet objects matching f's output structure at point x.
@@ -131,33 +239,33 @@ def function_to_jet(f: Callable[[Array], Any], x: Array) -> Jet:
 
 ################################################################################################################
 
-def _compute_gradient(f_primals: Callable, primals: Any, total_grad_tangent: Any) -> Any:
-  """Computes the gradient term: Jf(A) . JA"""
-  # The JVP of f(primals) with tangent S gives one column of the new Jacobian.
-  first_jvp = lambda S: jax.jvp(f_primals, (primals,), (S,))[1]
-  gradient = jax.vmap(first_jvp, in_axes=-1, out_axes=-1)(total_grad_tangent)
-  return gradient
+def _get_gradient(f_primals: Callable, primals: Any, total_grad_tangent: Any) -> Any:
+    """Computes the gradient term: Jf(A) . JA"""
+    # The JVP of f(primals) with tangent S gives one column of the new Jacobian.
+    first_jvp = lambda S: jax.jvp(f_primals, (primals,), (S,))[1]
+    gradient = jax.vmap(first_jvp, in_axes=-1, out_axes=-1)(total_grad_tangent)
+    return gradient
 
-def _compute_transport_term(f_primals: Callable, primals: Any, total_hess_tangent: Any) -> Any:
-  """Computes the Hessian's transport term: Jf(A) . HA"""
-  # Apply JVP to each element of the Hessian tangents.
-  first_jvp = lambda X_elem: jax.jvp(f_primals, (primals,), (X_elem,))[1]
-  jvp_vmapped_over_cols = jax.vmap(first_jvp, in_axes=-1, out_axes=-1)
-  transport = jax.vmap(jvp_vmapped_over_cols, in_axes=-2, out_axes=-2)(total_hess_tangent)
-  return transport
+def _get_hessian_transport(f_primals: Callable, primals: Any, total_hess_tangent: Any) -> Any:
+    """Computes the Hessian's transport term: Jf(A) . HA"""
+    # Apply JVP to each element of the Hessian tangents.
+    first_jvp = lambda X_elem: jax.jvp(f_primals, (primals,), (X_elem,))[1]
+    jvp_vmapped_over_cols = jax.vmap(first_jvp, in_axes=-1, out_axes=-1)
+    transport = jax.vmap(jvp_vmapped_over_cols, in_axes=-2, out_axes=-2)(total_hess_tangent)
+    return transport
 
-def _compute_intrinsic_term(f_primals: Callable, primals: Any, total_grad_tangent: Any) -> Any:
-  """Computes the Hessian's intrinsic term: Hf(A)[JA, JA]"""
-  # Define the nested JVP for the second derivative.
-  def second_jvp(U, V):
-    # Computes d/dV[ d/dU[f] ]
-    first_jvp_under_v = lambda p: jax.jvp(f_primals, (p,), (U,))[1]
-    return jax.jvp(first_jvp_under_v, (primals,), (V,))[1]
+def _get_hessian_curvature(f_primals: Callable, primals: Any, total_grad_tangent: Any) -> Any:
+    """Computes the Hessian's curvature term: d/dt^2 f(A + tV) term"""
 
-  # Vmap over both tangent inputs U and V.
-  inner_vmap = lambda U: jax.vmap(lambda V: second_jvp(U, V), in_axes=-1, out_axes=-1)(total_grad_tangent)
-  intrinsic = jax.vmap(inner_vmap, in_axes=-1, out_axes=-1)(total_grad_tangent)
-  return intrinsic
+    def second_jvp(U, V):
+      # Computes d/dV[ d/dU[f] ]
+      first_jvp_under_v = lambda p: jax.jvp(f_primals, (p,), (U,))[1]
+      return jax.jvp(first_jvp_under_v, (primals,), (V,))[1]
+
+    # Vmap over both tangent inputs U and V.
+    inner_vmap = lambda U: jax.vmap(lambda V: second_jvp(U, V), in_axes=-1, out_axes=-1)(total_grad_tangent)
+    intrinsic = jax.vmap(inner_vmap, in_axes=-1, out_axes=-1)(total_grad_tangent)
+    return intrinsic
 
 def _is_jet(x: Any) -> bool:
   """Checks if a value is a Jet instance."""
@@ -177,16 +285,78 @@ def _get_coordinate_dim(gradient_or_hessian):
 
 def jet_decorator(f: Callable) -> Callable:
   """
-  A decorator that extends a function to operate on `Jet` objects.
+  Lift a function to operate on `Jet` inputs and propagate derivatives.
 
-  This decorator enables functions that normally operate on JAX arrays or PyTrees of
-  arrays to perform second-order automatic differentiation by propagating `Jet`
-  objects. It computes the value, gradient, and Hessian of the composition of
-  the decorated function with the function(s) represented by the input Jets.
+  This decorator allows a function that normally accepts JAX arrays or PyTrees
+  of arrays to accept `Jet` objects and to return the corresponding value,
+  gradient, and (optionally) Hessian of the composed function.
 
-  The decorated function can accept any combination of `Jet` objects and regular
-  JAX arrays or PyTrees as positional arguments. Keyword arguments are passed
-  through without Jet propagation.
+  Inputs
+  - Positional arguments may be a mix of:
+    - `Jet` objects (scalars/arrays or PyTree-valued), or
+    - regular JAX arrays / PyTrees of arrays.
+  - Keyword arguments are passed through unchanged and are not treated as Jets.
+
+  Output
+  - If the function returns a single array-like value, the decorator returns a
+    single `Jet` with fields `(value, gradient, hessian)`.
+  - If the function returns a PyTree of arrays:
+    - If there was exactly one Jet input whose `value` is a PyTree, the return
+      is a single `Jet` whose `value/gradient/hessian` mirror that PyTree.
+    - Otherwise, the return is a PyTree with the same structure as the output,
+      with each leaf replaced by a `Jet`.
+
+  Selective derivative propagation
+  - The decorator determines which argument groups (each positional argument may
+    be a Jet or a PyTree of Jets) actually influence the function's output via
+    a light-weight JVP probe per group.
+  - The coordinate dimension R is the sum of coordinate dimensions across only
+    the used argument groups that provide gradients.
+  - If any used group does not provide gradients, no derivatives are returned
+    (the result has `gradient=None` and `hessian=None`).
+  - If all used groups provide gradients but at least one used group lacks a
+    Hessian, only first-order derivatives are returned (the result has
+    `hessian=None`).
+
+  Support for Jet-annotated parameters
+  - If the function signature annotates one or more parameters with `Jet`, the
+    decorator will rewrite the function to accept component-level Jets for those
+    parameters. This enables differentiating through functions that operate on
+    `Jet` internals, e.g. `jet_in.value`, `jet_in.gradient`, etc.
+
+  PyTree semantics
+  - `Jet` may hold PyTree-valued fields; in this case, `gradient` and `hessian`
+    must mirror the PyTree structure of `value` and satisfy the shape rules
+    described in the `Jet` docstring.
+
+  Examples
+  >>> @jet_decorator
+  ... def square(x):
+  ...   return x**2
+  >>> j = function_to_jet(lambda t: t, jnp.array(2.0))
+  >>> out = square(j)
+  >>> out.value, out.gradient, out.hessian
+  (Array(4., ...), Array([4.], ...), Array([[2.]], ...))
+
+  Unused argument with missing derivatives is ignored for propagation:
+  >>> @jet_decorator
+  ... def add_x_only(x, y):
+  ...   return x + 1  # does not depend on y
+  >>> x = function_to_jet(lambda t: t, jnp.array(3.0))
+  >>> y = Jet(value=jnp.array(5.0), gradient=None, hessian=None)
+  >>> out = add_x_only(x, y)
+  >>> out.gradient is not None and out.hessian is not None
+  True
+
+  When a used group lacks gradients, derivatives are suppressed:
+  >>> @jet_decorator
+  ... def use_y_only(x, y):
+  ...   return y + 2
+  >>> x = function_to_jet(lambda t: t, jnp.array(1.0))
+  >>> y = Jet(value=jnp.array(4.0), gradient=None, hessian=None)
+  >>> out = use_y_only(x, y)
+  >>> out.gradient is None and out.hessian is None
+  True
   """
 
   # Check if any parameters are annotated as Jet (for higher-order differentiation)
@@ -345,44 +515,45 @@ def jet_decorator(f: Callable) -> Callable:
     # Active groups are used and have gradients
     active_group_indices = [i for i, used in enumerate(used_groups) if used]
 
-    # Determine the total coordinate dimension (R) by summing dimensions of active Jet ARGUMENTS.
+    # All active jets must have the same coordinate dimension.
     sizes = [_get_coordinate_dim(arg_jet_groups[i][0].gradient) for i in active_group_indices]
-    offsets = [sum(sizes[:i]) for i in range(len(sizes))]
-    R = sum(sizes)
+    valid_sizes = [s for s in sizes if s is not None]
 
-    # Create a mapping from Jet id to its active group-local index (for padding logic)
+    if not valid_sizes:
+      R = 0
+    else:
+      first_size = valid_sizes[0]
+      if not all(s == first_size for s in valid_sizes):
+        raise ValueError(f"All active Jet inputs must have the same coordinate dimension. Mismatched dimensions: {valid_sizes}")
+      R = first_size
+
+    # Create a mapping from Jet id to its active group-local index
     jet_to_active_group = {}
-    for active_idx, group_idx in enumerate(active_group_indices):
+    for group_idx in active_group_indices:
       for jet in arg_jet_groups[group_idx]:
-        jet_to_active_group[id(jet)] = active_idx
+        jet_to_active_group[id(jet)] = group_idx
 
     # 2. TANGENT CONSTRUCTION: Create unified tangent PyTrees for gradients and Hessians.
-    # Each tangent has a final axis (or two for Hessians) of size R, where each
-    # Jet's derivatives are placed in a unique slice, padded with zeros.
-
     def grad_mapper(x):
       if _is_jet(x) and (id(x) in jet_to_active_group):
-        active_idx = jet_to_active_group[id(x)]
-        m, before = sizes[active_idx], offsets[active_idx]
-        after = R - before - m
-
-        g = x.gradient
-        # Pad the gradient PyTree leaves to the total coordinate dimension R.
-        def pad_leaf(leaf):
-          zb_g = jnp.zeros((*leaf.shape[:-1], before), dtype=leaf.dtype)
-          za_g = jnp.zeros((*leaf.shape[:-1], after), dtype=leaf.dtype)
-          return jnp.concatenate([zb_g, leaf, za_g], axis=-1)
-        return jtu.tree_map(pad_leaf, g)
+        return x.gradient
       else:
         # Non-Jet leaves and inactive Jets get zero tangents.
-        if _is_jet(x):
-          return jtu.tree_map(
-            lambda leaf: jnp.zeros((*leaf.shape, R), dtype=leaf.dtype),
-            x.value,
-          )
-        else:
-          vx = jnp.asarray(x)
-          return jnp.zeros((*vx.shape, R), dtype=vx.dtype)
+        value_tree = x.value if _is_jet(x) else x
+
+        def zero_leaf(leaf):
+            if leaf is None:
+                return None
+            vx = jnp.asarray(leaf)
+            if R == 0:
+              # Cannot create a zero-sized dimension, so return a zero-like array
+              # with the same shape as the value. This case should be handled
+              # by an earlier check that returns a Jet with None derivatives,
+              # but this is a safeguard.
+              return jnp.zeros_like(vx)
+            return jnp.zeros((*vx.shape, R), dtype=vx.dtype)
+
+        return jtu.tree_map(zero_leaf, value_tree, is_leaf=lambda n: n is None)
 
     total_grad_tangent = jtu.tree_map(grad_mapper, args, is_leaf=_is_jet)
 
@@ -394,43 +565,31 @@ def jet_decorator(f: Callable) -> Callable:
     if hessian_possible:
       def hess_mapper(x):
         if _is_jet(x) and (id(x) in jet_to_active_group) and (x.hessian is not None):
-          active_idx = jet_to_active_group[id(x)]
-          m, before = sizes[active_idx], offsets[active_idx]
-          after = R - before - m
-
-          H = x.hessian
-          # Pad the hessian PyTree leaves to the total coordinate dimensions R x R.
-          def pad_leaf(leaf):
-            # Pad columns to R.
-            zb_h_cols = jnp.zeros((*leaf.shape[:-1], before), dtype=leaf.dtype)
-            za_h_cols = jnp.zeros((*leaf.shape[:-1], after), dtype=leaf.dtype)
-            H_cols = jnp.concatenate([zb_h_cols, leaf, za_h_cols], axis=-1)
-
-            # Pad rows to R.
-            zb_h_rows = jnp.zeros((*H_cols.shape[:-2], before, R), dtype=leaf.dtype)
-            za_h_rows = jnp.zeros((*H_cols.shape[:-2], after, R), dtype=leaf.dtype)
-            return jnp.concatenate([zb_h_rows, H_cols, za_h_rows], axis=-2)
-          return jtu.tree_map(pad_leaf, H)
+          return x.hessian
         else:
-          if _is_jet(x):
-            return jtu.tree_map(
-              lambda leaf: jnp.zeros((*leaf.shape, R, R), dtype=leaf.dtype),
-              x.value,
-            )
-          else:
-            vx = jnp.asarray(x)
+          # Non-Jet leaves and inactive Jets get zero tangents.
+          value_tree = x.value if _is_jet(x) else x
+
+          def zero_leaf(leaf):
+            if leaf is None:
+                return None
+            vx = jnp.asarray(leaf)
+            if R == 0:
+              return jnp.zeros_like(vx)
             return jnp.zeros((*vx.shape, R, R), dtype=vx.dtype)
+
+          return jtu.tree_map(zero_leaf, value_tree, is_leaf=lambda n: n is None)
 
       total_hess_tangent = jtu.tree_map(hess_mapper, args, is_leaf=_is_jet)
 
     # 3. DIFFERENTIATION: Decompose into gradient and Hessian calculations.
     f_primals = lambda a: f(*a, **kwargs)
 
-    gradient = _compute_gradient(f_primals, primals, total_grad_tangent)
+    gradient = _get_gradient(f_primals, primals, total_grad_tangent)
 
     if hessian_possible:
-      transport = _compute_transport_term(f_primals, primals, total_hess_tangent)
-      intrinsic = _compute_intrinsic_term(f_primals, primals, total_grad_tangent)
+      transport = _get_hessian_transport(f_primals, primals, total_hess_tangent)
+      intrinsic = _get_hessian_curvature(f_primals, primals, total_grad_tangent)
       hessian = jtu.tree_map(jnp.add, transport, intrinsic)
     else:
       hessian = None

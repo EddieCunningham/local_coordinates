@@ -4,6 +4,7 @@ import pytest
 from local_coordinates.jet import Jet, function_to_jet
 from local_coordinates.jet import jet_decorator
 import jax.tree_util as jtu
+import equinox as eqx
 
 def test_jet_creation():
     value = jnp.array(3.0)
@@ -233,23 +234,17 @@ def test_jet_decorator_two_args():
         # mix two arguments
         return x * y + x**2
 
-    jet_x = function_to_jet(lambda t: t, jnp.array(1.2))
-    jet_y = function_to_jet(lambda t: t, jnp.array(-0.7))
-    out = g(jet_x, jet_y)
+    def f(t):
+      return t * t + t**2
 
-    val = 1.2*(-0.7) + 1.2**2
-    grad = jnp.array([(-0.7) + 2*1.2, 1.2])
-    H = jnp.array([[2.0, 1.0],[1.0, 0.0]])
+    t = jnp.array([1.2])
+    jet = function_to_jet(f, t)
+    x_jet = function_to_jet(lambda x: x, t[0])
+    out = g(x_jet, x_jet)
 
-    expected = Jet(
-        value=jnp.array(val),
-        gradient=grad,
-        hessian=H,
-    )
-
-    assert jnp.allclose(out.value, expected.value)
-    assert jnp.allclose(out.gradient, expected.gradient)
-    assert jnp.allclose(out.hessian, expected.hessian)
+    assert jnp.allclose(out.value, jet.value)
+    assert jnp.allclose(out.gradient, jet.gradient)
+    assert jnp.allclose(out.hessian, jet.hessian)
 
 
 def test_jet_decorator_mixed_args_constant_and_jet():
@@ -396,23 +391,18 @@ def test_jet_decorator_mixed_partial_derivatives():
     def g(x, y):
         return x**2 + y
 
-    jet_x = Jet(
-        value=jnp.array(2.0),
-        gradient=jnp.array([1.0]),
-        hessian=jnp.array([[0.0]]),
-    )
+    def f(t):
+        return t**2 + t
 
-    jet_y = Jet(
-        value=jnp.array(3.0),
-        gradient=jnp.array([1.0]),
-        hessian=None,
-    )
-
-    out = g(jet_x, jet_y)
+    t = jnp.array([2.0])
+    jet = function_to_jet(f, t)
+    x_jet = function_to_jet(lambda x: x, t[0])
+    y_jet = Jet(value=t[0], gradient=jnp.array([1.0]), hessian=None)
+    out = g(x_jet, y_jet)
 
     # Should compute value and gradient, but not hessian
-    assert jnp.allclose(out.value, jnp.array(7.0))
-    assert jnp.allclose(out.gradient, jnp.array([4.0, 1.0]))
+    assert jnp.allclose(out.value, jet.value)
+    assert jnp.allclose(out.gradient, jet.gradient)
     assert out.hessian is None
 
 def test_jet_decorator_composition_2():
@@ -972,16 +962,21 @@ def test_jet_decorator_three_args_selective_derivatives():
     def g(x, y, z):
         return x + 2*y  # z unused
 
-    x = Jet(value=jnp.array(1.5), gradient=jnp.array([1.0]), hessian=jnp.array([[0.0]]))
-    y = Jet(value=jnp.array(-0.5), gradient=jnp.array([1.0]), hessian=None)
+    def f(t):
+        return t + 2*t
+
+    t = jnp.array([1.5])
+    jet = function_to_jet(f, t)
+    x = function_to_jet(lambda x: x, t[0])
+    y = Jet(value=t[0], gradient=jnp.array([1.0]), hessian=None)
     z = Jet(value=jnp.array(7.0), gradient=None, hessian=None)
 
     out = g(x, y, z)
 
     # value = 1.5 + 2*(-0.5) = 0.5
-    assert jnp.allclose(out.value, 0.5)
+    assert jnp.allclose(out.value, jet.value)
     # gradient over [x, y] coordinates should be [1, 2]
-    assert jnp.allclose(out.gradient, jnp.array([1.0, 2.0]))
+    assert jnp.allclose(out.gradient, jet.gradient)
     # y lacks hessian, so overall hessian should be None
     assert out.hessian is None
 
@@ -1072,3 +1067,48 @@ def test_jet_decorator_used_group_without_gradient():
     assert jnp.allclose(out.value, 4.0)
     assert out.gradient is None
     assert out.hessian is None
+
+
+class JetContainer(eqx.Module):
+    jet: Jet
+
+@jet_decorator
+def func_with_jet_in_container(container: JetContainer, jet_param: Jet):
+    """
+    This function is decorated and takes a Jet-annotated parameter, which
+    triggers the rewriting logic in jet_decorator. It also takes a container
+    that holds a Jet. The decorator should be able to handle this.
+    """
+    return container.jet.value + jet_param.value
+
+def test_jet_decorator_handles_jet_in_container():
+    """
+    Tests that @jet_decorator can handle arguments that are containers
+    holding Jet objects, especially when other arguments are Jet-annotated
+    (which triggers the argument-rewriting logic).
+    """
+    # Jet inside the container
+    t1 = 2.0
+    jet1 = function_to_jet(lambda x: x**2, jnp.array(t1))
+    container = JetContainer(jet=jet1)
+
+    # The Jet-annotated parameter
+    t2 = 3.0
+    jet2 = function_to_jet(lambda x: x**3, jnp.array(t2))
+
+    # This call will fail with the current implementation because the decorator
+    # will incorrectly strip the .jet attribute from the container down to a raw array.
+    output = func_with_jet_in_container(container, jet2)
+
+    # Ground truth for h(t1, t2) = (t1**2) + (t2**3)
+    # The decorator should concatenate the coordinate systems of the two jets.
+    val = t1**2 + t2**3  # 4 + 27 = 31
+    grad = jnp.array([2 * t1 * 1.0, 3 * t2**2 * 1.0]) # [4, 27]
+    hess = jnp.array([
+        [2.0, 0.0],
+        [0.0, 6 * t2]
+    ]) # [[2, 0], [0, 18]]
+
+    assert jnp.allclose(output.value, val)
+    assert jnp.allclose(output.gradient, grad)
+    assert jnp.allclose(output.hessian, hess)

@@ -82,9 +82,9 @@ def test_change_coordinates_vector(a_basis, another_basis):
 
     # Manual transformation
     T = get_basis_transform(a_basis, another_basis)
-    manual_new_vec = jnp.einsum('l,ml->m', vec, T)
-    manual_new_grad = jnp.einsum('lr,ml->mr', gradient, T)
-    manual_new_hess = jnp.einsum('lrs,ml->mrs', hessian, T)
+    manual_new_vec = jnp.einsum('l,ml->m', vec, T.value)
+    manual_new_grad = jnp.einsum('lr,ml->mr', gradient, T.value)
+    manual_new_hess = jnp.einsum('lrs,ml->mrs', hessian, T.value)
 
 
     assert new_tensor.basis == another_basis
@@ -106,7 +106,7 @@ def test_change_coordinates_covector(a_basis, another_basis):
 
     # Manual transformation
     T = get_basis_transform(a_basis, another_basis)
-    Tinv = jnp.linalg.inv(T)
+    Tinv = jnp.linalg.inv(T.value)
     manual_new_covec = jnp.einsum('k,mk->m', covec, Tinv)
     manual_new_grad = jnp.einsum('kr,mk->mr', gradient, Tinv)
     manual_new_hess = jnp.einsum('krs,mk->mrs', hessian, Tinv)
@@ -129,7 +129,7 @@ def test_change_coordinates_metric_tensor(a_basis, another_basis):
 
     # Manual transformation
     T = get_basis_transform(a_basis, another_basis)
-    Tinv = jnp.linalg.inv(T)
+    Tinv = jnp.linalg.inv(T.value)
     manual_new_metric = jnp.einsum('kl,mk,nl->mn', metric, Tinv, Tinv)
     manual_new_grad = jnp.einsum('klr,mk,nl->mnr', gradient, Tinv, Tinv)
     manual_new_hess = jnp.einsum('klrs,mk,nl->mnrs', hessian, Tinv, Tinv)
@@ -151,9 +151,9 @@ def test_change_coordinates_tensor_0_2(a_basis, another_basis):
 
     # Manual transformation
     T = get_basis_transform(a_basis, another_basis)
-    manual_new_components = jnp.einsum('ij,mi,nj->mn', components, T, T)
-    manual_new_grad = jnp.einsum('ijr,mi,nj->mnr', gradient, T, T)
-    manual_new_hess = jnp.einsum('ijrs,mi,nj->mnrs', hessian, T, T)
+    manual_new_components = jnp.einsum('ij,mi,nj->mn', components, T.value, T.value)
+    manual_new_grad = jnp.einsum('ijr,mi,nj->mnr', gradient, T.value, T.value)
+    manual_new_hess = jnp.einsum('ijrs,mi,nj->mnrs', hessian, T.value, T.value)
 
     assert new_tensor.basis == another_basis
     assert jnp.allclose(new_tensor.components.value, manual_new_components)
@@ -173,19 +173,19 @@ def test_change_coordinates_tensor_2_2(a_basis, another_basis):
 
     # Manual transformation
     T = get_basis_transform(a_basis, another_basis)
-    Tinv = jnp.linalg.inv(T)
+    Tinv = jnp.linalg.inv(T.value)
 
     manual_new_components = jnp.einsum(
         'ijkl,mi,nj,ok,pl->mnop',
-        components, Tinv, Tinv, T, T
+        components, Tinv, Tinv, T.value, T.value
     )
     manual_new_grad = jnp.einsum(
         'ijklr,mi,nj,ok,pl->mnopr',
-        gradient, Tinv, Tinv, T, T
+        gradient, Tinv, Tinv, T.value, T.value
     )
     manual_new_hess = jnp.einsum(
         'ijklrs,mi,nj,ok,pl->mnoprs',
-        hessian, Tinv, Tinv, T, T
+        hessian, Tinv, Tinv, T.value, T.value
     )
 
     assert new_tensor.basis == another_basis

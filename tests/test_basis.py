@@ -1,6 +1,6 @@
 import jax.numpy as jnp
 from local_coordinates.basis import BasisVectors, get_basis_transform, make_coordinate_basis
-from local_coordinates.jet import Jet
+from local_coordinates.jet import Jet, function_to_jet
 import pytest
 import jax
 
@@ -36,7 +36,7 @@ def test_get_coordinate_transform_simple():
   # T = inv(b2)
   expected_transform = jnp.linalg.inv(b2)
 
-  assert jnp.allclose(transform, expected_transform)
+  assert jnp.allclose(transform.value, expected_transform)
 
 def test_get_coordinate_transform_rotated():
   # cs1 is standard basis
@@ -63,7 +63,7 @@ def test_get_coordinate_transform_rotated():
   # T = inv(b2) @ b1
   expected_transform = jnp.linalg.inv(b2) @ b1
 
-  assert jnp.allclose(transform, expected_transform)
+  assert jnp.allclose(transform.value, expected_transform)
 
 def test_basis_vectors_second_derivatives():
   p = jnp.array([1., 2.])
@@ -108,7 +108,7 @@ def test_get_coordinate_transform_skewed():
   # since the source basis is identity.
   expected_transform = jnp.linalg.inv(b2)
 
-  assert jnp.allclose(transform, expected_transform)
+  assert jnp.allclose(transform.value, expected_transform)
 
 def test_make_coordinate_basis_is_idempotent_on_coordinate_basis():
   """
@@ -171,3 +171,116 @@ def test_make_coordinate_basis_symmetrizes():
 
   # Assert that d(E_j)/dz^k is symmetric in j and k
   assert jnp.allclose(dframe_dz_new, jnp.swapaxes(dframe_dz_new, 1, 2))
+
+import jax
+import jax.numpy as jnp
+import pytest
+from local_coordinates.jet import Jet
+from local_coordinates.basis import BasisVectors, get_mixing_function
+
+@pytest.fixture
+def sample_basis():
+    """Provides a sample 2D BasisVectors object for testing."""
+    p = jnp.array([1.0, 2.0])
+    # Let D=2 (input dim) and N=2 (output dim)
+    components_jet = Jet(
+        value=jnp.array([[1., 0.5], [0.2, 1.]]),  # Basis vectors (Jacobian)
+        # The effective hessian will be symmetrized by the Taylor expansion's quadratic form.
+        # We provide a symmetric one here to make the test pass.
+        gradient=jnp.array([[[0.1, 0.25], [0.25, 0.4]], [[0.5, 0.65], [0.65, 0.8]]]), # d(Basis)/dx (Hessian)
+        hessian=None # Not needed for mixing function up to 2nd order
+    )
+    return BasisVectors(p=p, components=components_jet)
+
+def test_mixing_function_at_origin(sample_basis):
+    """Tests if the mixing function returns the base point p at dx=0."""
+    mixing_fn = get_mixing_function(sample_basis)
+    output_p = mixing_fn(jnp.zeros(2))
+    assert jnp.allclose(output_p, sample_basis.p)
+
+def test_mixing_function_first_derivative(sample_basis):
+    """Tests if the Jacobian of the mixing function at dx=0 is the basis vectors."""
+    mixing_fn = get_mixing_function(sample_basis)
+    jacobian = jax.jacfwd(mixing_fn)(jnp.zeros(2))
+    assert jnp.allclose(jacobian, sample_basis.components.value)
+
+def test_mixing_function_second_derivative(sample_basis):
+    """Tests if the Hessian of the mixing function at dx=0 is correct."""
+    mixing_fn = get_mixing_function(sample_basis)
+    # The Hessian of a vector-valued function is a tensor of shape (out, in, in)
+    # jax.jacfwd(jax.jacrev(f)) computes this.
+    hessian = jax.jacfwd(jax.jacrev(mixing_fn))(jnp.zeros(2))
+    assert jnp.allclose(hessian, sample_basis.components.gradient)
+
+def test_mixing_function_jit_compatibility(sample_basis):
+    """Tests if the mixing function can be JIT-compiled."""
+    mixing_fn = get_mixing_function(sample_basis)
+
+    dx = jnp.array([0.1, -0.1])
+
+    # Ensure both original and JIT'd versions give the same output
+    expected_output = mixing_fn(dx)
+    jit_output = jax.jit(mixing_fn)(dx)
+
+    assert jnp.allclose(jit_output, expected_output)
+
+def test_mixing_function_vmap_compatibility(sample_basis):
+    """Tests if the mixing function works with vmap."""
+    mixing_fn = get_mixing_function(sample_basis)
+
+    batch_size = 5
+    dx_batch = jnp.ones((batch_size, 2))
+
+    # vmap the function over a batch of displacement vectors
+    vmapped_fn = jax.vmap(mixing_fn)
+    batch_output = vmapped_fn(dx_batch)
+
+    # Manually compute the expected output for comparison
+    manual_output = jnp.stack([mixing_fn(dx) for dx in dx_batch])
+
+    assert batch_output.shape == (batch_size, 2)
+    assert jnp.allclose(batch_output, manual_output)
+
+
+def test_get_basis_transform_with_derivatives():
+  """
+  Tests that get_basis_transform correctly propagates derivatives
+  when both basis vectors have value, gradient, and hessian.
+  """
+  # Define two basis vector fields as functions of a single coordinate 'x'
+  def from_basis_func(x):
+    # A simple linear function of x
+    return jnp.eye(2) + x[0] * jnp.array([[1., 2.], [3., 4.]])
+
+  def to_basis_func(x):
+    # A rotation matrix dependent on x
+    angle = jnp.pi / 4 * x[0]
+    c, s = jnp.cos(angle), jnp.sin(angle)
+    return jnp.array([[c, -s], [s, c]])
+
+  # The point in the coordinate space to evaluate derivatives
+  x0 = jnp.array([0.5])
+
+  # Create Jet objects for each basis using function_to_jet
+  from_components_jet = function_to_jet(from_basis_func, x0)
+  to_components_jet = function_to_jet(to_basis_func, x0)
+
+  # Create BasisVectors objects
+  p = jnp.array([0., 0.]) # this is arbitrary for this test
+  from_basis = BasisVectors(p=p, components=from_components_jet)
+  to_basis = BasisVectors(p=p, components=to_components_jet)
+
+  # Get the transformation Jet
+  transform_jet = get_basis_transform(from_basis, to_basis)
+
+  # For verification, define the transformation function directly
+  def transform_func(x):
+    return jnp.linalg.inv(to_basis_func(x)) @ from_basis_func(x)
+
+  # Get the expected Jet for the transformation function
+  expected_transform_jet = function_to_jet(transform_func, x0)
+
+  # Compare value, gradient, and hessian
+  assert jnp.allclose(transform_jet.value, expected_transform_jet.value)
+  assert jnp.allclose(transform_jet.gradient, expected_transform_jet.gradient)
+  assert jnp.allclose(transform_jet.hessian, expected_transform_jet.hessian)
