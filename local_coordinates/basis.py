@@ -7,8 +7,7 @@ import equinox as eqx
 from jaxtyping import Array, Float, PRNGKeyArray
 from linsdex import AbstractBatchableObject
 from plum import dispatch
-from local_coordinates.jet import Jet
-from local_coordinates.jet import jet_decorator
+from local_coordinates.jet import Jet, jet_decorator, _expand_jet
 
 class BasisVectors(AbstractBatchableObject):
   """
@@ -47,10 +46,15 @@ def get_basis_transform(from_basis: BasisVectors, to_basis: BasisVectors) -> Jet
   Get the transformation matrix from one set of basis vectors to another.
   """
   @jet_decorator
-  def get_components(from_components: Jet, to_components: Jet) -> Array:
-    return jnp.linalg.solve(to_components.value, from_components.value)
+  def get_components(from_components, to_components) -> Array:
+    return jnp.linalg.solve(to_components, from_components)
 
-  new_components: Jet = get_components(from_basis.components, to_basis.components)
+  from_components_val, _, _ = _expand_jet(from_basis.components)
+  to_components_val, _, _ = _expand_jet(to_basis.components)
+  new_components = get_components(
+    from_components_val,
+    to_components_val
+  )
   return new_components
 
 def make_coordinate_basis(basis: BasisVectors) -> BasisVectors:

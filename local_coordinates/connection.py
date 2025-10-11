@@ -9,7 +9,7 @@ from linsdex import AbstractBatchableObject
 from local_coordinates.basis import BasisVectors, get_basis_transform
 from plum import dispatch
 from local_coordinates.tensor import Tensor, change_coordinates
-from local_coordinates.jet import Jet
+from local_coordinates.jet import Jet, _expand_jet
 from local_coordinates.jet import jet_decorator
 
 class Connection(AbstractBatchableObject):
@@ -33,13 +33,15 @@ class Connection(AbstractBatchableObject):
 
     # Compute the covariant derivative
     @jet_decorator
-    def components(x: Jet, y: Jet) -> Array:
-      # (∇_X Y)^k first term: X^i ∂_i Y^k
-      term1 = jnp.einsum("i,ki->k", x.value, y.gradient)
-      term2 = jnp.einsum("kij,i,j", self.christoffel_symbols.value, x.value, y.value)
+    def components(gamma_val, x_val, y_val, y_grad_val) -> Array:
+      term1 = jnp.einsum("i,ki->k", x_val, y_grad_val)
+      term2 = jnp.einsum("kij,i,j->k", gamma_val, x_val, y_val)
       return term1 + term2
 
-    new_components = components(X.components, Y.components)
+    gamma_value_jet, _, _ = _expand_jet(self.christoffel_symbols)
+    x_value_jet, _, _ = _expand_jet(X.components)
+    y_value_jet, y_gradient_jet, _ = _expand_jet(Y.components)
+    new_components = components(gamma_value_jet, x_value_jet, y_value_jet, y_gradient_jet)
     return Tensor(X.tensor_type, self.basis, new_components)
 
 @dispatch
@@ -51,10 +53,12 @@ def change_coordinates(connection: Connection, new_basis: BasisVectors) -> Conne
   T_jet: Jet = get_basis_transform(connection.basis, new_basis)
 
   @jet_decorator
-  def get_components(christoffel_symbols: Jet, T: Jet) -> Jet:
-    term1 = jnp.einsum("ai,cja,kc->kij", T.value, T.gradient, T.value)
-    term2 = jnp.einsum("cab,ai,bj,kc->kij", christoffel_symbols.value, T.value, T.value, T.value)
+  def get_components(christoffel_symbols_val, T_val, T_grad) -> Jet:
+    term1 = jnp.einsum("ai,cja,kc->kij", T_val, T_grad, T_val)
+    term2 = jnp.einsum("cab,ai,bj,kc->kij", christoffel_symbols_val, T_val, T_val, T_val)
     return term1 + term2
 
-  new_christoffel_symbols = get_components(connection.christoffel_symbols, T_jet)
+  cs_value_jet, _, _ = _expand_jet(connection.christoffel_symbols)
+  T_value_jet, T_gradient_jet, _ = _expand_jet(T_jet)
+  new_christoffel_symbols = get_components(cs_value_jet, T_value_jet, T_gradient_jet)
   return Connection(basis=new_basis, christoffel_symbols=new_christoffel_symbols)

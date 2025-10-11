@@ -282,6 +282,42 @@ def _get_coordinate_dim(gradient_or_hessian):
   # Return the last axis size of the first leaf
   return leaves[0].shape[-1]
 
+def _expand_jet(jet: Jet) -> Tuple[Jet, Jet, Jet]:
+  value_jet = Jet(
+    value=jet.value,
+    gradient=jet.gradient,
+    hessian=jet.hessian
+  )
+
+  if jet.gradient is not None:
+    gradient_jet = Jet(
+      value=jet.gradient,
+      gradient=jet.hessian,
+      hessian=None
+    )
+  else:
+    # If no gradient, create a Jet with None derivatives
+    gradient_jet = Jet(
+      value=jet.gradient,  # This is None
+      gradient=None,
+      hessian=None
+    )
+
+  if jet.hessian is not None:
+    hessian_jet = Jet(
+      value=jet.hessian,
+      gradient=None,
+      hessian=None
+    )
+  else:
+    hessian_jet = Jet(
+      value=jet.hessian,  # This is None
+      gradient=None,
+      hessian=None
+    )
+
+  return value_jet, gradient_jet, hessian_jet
+
 
 def jet_decorator(f: Callable) -> Callable:
   """
@@ -358,93 +394,15 @@ def jet_decorator(f: Callable) -> Callable:
   >>> out.gradient is None and out.hessian is None
   True
   """
-
-  # Check if any parameters are annotated as Jet (for higher-order differentiation)
+  # Functions with Jet annotations are not supported.
   sig = inspect.signature(f)
-  params = list(sig.parameters.values())
-  jet_param_indices = [i for i, p in enumerate(params) if p.annotation == Jet]
-
-  if jet_param_indices:
-    # This function accepts Jets as inputs. Rewrite it to accept components.
-    def rewritten_f(*component_args):
-      # Reconstruct Jets from their components (value, gradient, hessian triples)
-      # Note: jet_decorator has already extracted .value from the shifted Jets,
-      # so component_args contains the raw values/gradients/hessians
-      reconstructed_args = []
-      comp_idx = 0
-      for i in range(len(params)):
-        if i in jet_param_indices:
-          # This parameter expects a Jet, reconstruct it from 3 components
-          # These are the raw array values after jet_decorator extracted them
-          value_comp = component_args[comp_idx]
-          grad_comp = component_args[comp_idx + 1]
-          hess_comp = component_args[comp_idx + 2]
-
-          # Reconstruct the Jet the function expects
-          reconstructed_jet = Jet(
-            value=value_comp,
-            gradient=grad_comp,
-            hessian=hess_comp
-          )
-          reconstructed_args.append(reconstructed_jet)
-          comp_idx += 3
-        else:
-          # Regular argument, pass through
-          reconstructed_args.append(component_args[comp_idx])
-          comp_idx += 1
-
-      return f(*reconstructed_args)
-
-    # Apply jet_decorator to the rewritten function
-    rewritten_decorated = jet_decorator(rewritten_f)
-
-    @wraps(f)
-    def jet_aware_wrapper(*args, **kwargs):
-      # Shift input Jets: for each Jet parameter, create shifted Jets
-      shifted_args = []
-      for i, arg in enumerate(args):
-        if i in jet_param_indices and isinstance(arg, Jet):
-          # Create shifted Jets: gradient→value, hessian→gradient, None→hessian
-          value_jet = Jet(
-            value=arg.value,
-            gradient=arg.gradient,
-            hessian=arg.hessian
-          )
-
-          if arg.gradient is not None:
-            gradient_jet = Jet(
-              value=arg.gradient,
-              gradient=arg.hessian,
-              hessian=None
-            )
-          else:
-            # If no gradient, create a Jet with None derivatives
-            gradient_jet = Jet(
-              value=arg.gradient,  # This is None
-              gradient=None,
-              hessian=None
-            )
-
-          if arg.hessian is not None:
-            hessian_jet = Jet(
-              value=arg.hessian,
-              gradient=None,
-              hessian=None
-            )
-          else:
-            hessian_jet = Jet(
-              value=arg.hessian,  # This is None
-              gradient=None,
-              hessian=None
-            )
-
-          shifted_args.extend([value_jet, gradient_jet, hessian_jet])
-        else:
-          shifted_args.append(arg)
-
-      return rewritten_decorated(*shifted_args, **kwargs)
-
-    return jet_aware_wrapper
+  if any(p.annotation == Jet for p in sig.parameters.values()):
+    raise TypeError(
+        "jet_decorator cannot be applied to functions that accept Jet objects "
+        "as arguments. To differentiate through such a function, rewrite it "
+        "to operate on Jet components (value, gradient, hessian) and pass "
+        "them as separate arguments."
+    )
 
   @wraps(f)
   def decorated_f(*args, **kwargs):

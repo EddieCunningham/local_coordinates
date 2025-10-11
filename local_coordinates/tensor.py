@@ -9,7 +9,7 @@ from jaxtyping import Array, Float, PRNGKeyArray
 from linsdex import AbstractBatchableObject
 from local_coordinates.basis import BasisVectors, get_basis_transform
 from plum import dispatch
-from local_coordinates.jet import Jet, jet_decorator
+from local_coordinates.jet import Jet, jet_decorator, _expand_jet
 
 class TensorType(eqx.Module):
   k: int # Covariant index
@@ -91,9 +91,24 @@ class Tensor(AbstractBatchableObject):
     else:
       raise ValueError(f"Invalid number of dimensions: {self.components.ndim}")
 
-@jet_decorator
-def function_multiply_tensor(T: Tensor, f: Jet) -> Jet:
-  return T.components.value * f.value
+  def __add__(self, other: 'Tensor') -> 'Tensor':
+    @jet_decorator
+    def add_components(t_comps, other_comps):
+      return t_comps + other_comps
+    t_comps_val, _, _ = _expand_jet(self.components)
+    other_comps_val, _, _ = _expand_jet(other.components)
+    new_components = add_components(t_comps_val, other_comps_val)
+    return Tensor(tensor_type=self.tensor_type, basis=self.basis, components=new_components)
+
+def function_multiply_tensor(T: Tensor, f: Jet) -> Tensor:
+  @jet_decorator
+  def multiply_components(t_comps, f_comps):
+      return t_comps.__rmul__(f_comps)
+
+  t_comps_val, _, _ = _expand_jet(T.components)
+  f_comps_val, _, _ = _expand_jet(f)
+  new_components = multiply_components(t_comps_val, f_comps_val)
+  return Tensor(tensor_type=T.tensor_type, basis=T.basis, components=new_components)
 
 @dispatch
 def change_coordinates(tensor: Tensor, new_basis: BasisVectors) -> Tensor:
@@ -144,10 +159,11 @@ def change_coordinates(tensor: Tensor, new_basis: BasisVectors) -> Tensor:
   einsum_str = f"{input_tensor_str},{','.join(transforms_str_parts)}->{output_tensor_str}"
 
   @jet_decorator
-  def transform_components(components: Jet) -> Array:
-    return jnp.einsum(einsum_str, components.value, *transforms)
+  def transform_components(components) -> Array:
+    return jnp.einsum(einsum_str, components, *transforms)
 
-  new_components = transform_components(tensor.components)
+  t_comps_val, _, _ = _expand_jet(tensor.components)
+  new_components = transform_components(t_comps_val)
 
   return Tensor(
     tensor_type=tensor.tensor_type,
