@@ -24,8 +24,8 @@ def plot_coordinate_grid(
   """
   jet: Jet = Jet(
       value=basis.p,
-      gradient=basis.basis_vectors,
-      hessian=basis.second_derivatives,
+      gradient=basis.components.value,
+      hessian=basis.components.gradient,
   )
 
   # Infer input dim from a gradient leaf

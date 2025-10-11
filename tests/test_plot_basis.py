@@ -89,9 +89,9 @@ def test_plot_coordinate_grid_random_basis_after_make_coordinate_basis(tmp_path)
   basis_coord = make_coordinate_basis(basis)
   # Invariants: same point and frame
   assert jnp.allclose(basis_coord.p, basis.p)
-  assert jnp.allclose(basis_coord.basis_vectors, basis.basis_vectors)
+  assert jnp.allclose(basis_coord.components.value, basis.components.value)
   # Hessian should be symmetric in the last two axes
-  Hc = basis_coord.second_derivatives
+  Hc = basis_coord.components.gradient
   assert jnp.allclose(Hc, jnp.swapaxes(Hc, -2, -1))
 
   savepath = tmp_path / 'grid_random_coord.png'

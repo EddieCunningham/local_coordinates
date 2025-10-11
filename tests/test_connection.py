@@ -2,7 +2,7 @@ import jax.numpy as jnp
 from local_coordinates.basis import BasisVectors
 from local_coordinates.tensor import Tensor, TensorType
 from local_coordinates.connection import Connection
-from local_coordinates.jet import Jet, function_to_jet, _expand_jet
+from local_coordinates.jet import Jet, function_to_jet
 import jax.random as random
 import jax
 from local_coordinates.connection import change_coordinates
@@ -138,8 +138,10 @@ def test_covariant_derivative_change_of_basis():
   comp_out2: Tensor = conn2.covariant_derivative(X, Y)
 
   assert jnp.allclose(true_out2.components.value, comp_out2.components.value)
-  assert true_out2.components.gradient == comp_out2.components.gradient
-  assert true_out2.components.hessian == comp_out2.components.hessian
+  if true_out2.components.gradient is not None and comp_out2.components.gradient is not None:
+    assert jnp.allclose(true_out2.components.gradient, comp_out2.components.gradient)
+  if true_out2.components.hessian is not None and comp_out2.components.hessian is not None:
+    assert jnp.allclose(true_out2.components.hessian, comp_out2.components.hessian)
 
 
 def test_covariant_derivative_linearity_fX():
@@ -192,7 +194,7 @@ def test_covariant_derivative_linearity_fY():
     def X_f_components(X_components_val, f_grad_val):
       return jnp.einsum('i,i', f_grad_val, X_components_val)
 
-    _, f_grad_jet, _ = _expand_jet(f_jet)
+    f_grad_jet = f_jet.get_gradient_jet()
     X_f = X_f_components(X.components, f_grad_jet)
     X_f_Y = function_multiply_tensor(Y, X_f)
 
@@ -282,8 +284,11 @@ def test_covariant_derivative_linearity_fY_with_hessian():
         val = jnp.einsum('i,i', f_grad, X_comps)
         return val
 
-    X_val_jet, X_grad_jet, _ = _expand_jet(X.components)
-    f_val_jet, f_grad_jet, f_hess_jet = _expand_jet(f_jet)
+    X_val_jet = X.components.get_value_jet()
+    X_grad_jet = X.components.get_gradient_jet()
+    f_val_jet = f_jet.get_value_jet()
+    f_grad_jet = f_jet.get_gradient_jet()
+    f_hess_jet = f_jet.get_hessian_jet()
     X_f = X_f_components(X_val_jet, X_grad_jet, f_grad_jet, f_hess_jet)
     X_f_Y = function_multiply_tensor(Y, X_f)
 

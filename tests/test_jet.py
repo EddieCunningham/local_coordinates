@@ -1,7 +1,7 @@
 import jax
 import jax.numpy as jnp
 import pytest
-from local_coordinates.jet import Jet, function_to_jet, _expand_jet
+from local_coordinates.jet import Jet, function_to_jet
 from local_coordinates.jet import jet_decorator
 import jax.tree_util as jtu
 import equinox as eqx
@@ -420,7 +420,7 @@ def test_jet_decorator_composition_2():
     input_jet = function_to_jet(lambda x: x, jnp.array(t))
 
     # Decompose the input jet and pass the gradient component to g
-    _, gradient_jet_comp, _ = _expand_jet(input_jet)
+    gradient_jet_comp = input_jet.get_gradient_jet()
     output_jet = g(gradient_jet_comp)
 
     # g returns the gradient of the input jet. For id(t), gradient is [1.0].
@@ -441,7 +441,7 @@ def test_jet_decorator_with_jet_param_hessian_access():
     t = jnp.array([1.0, 2.0])
     input_jet = function_to_jet(lambda x: x[0]**2 + x[1]**2, t)
 
-    _, _, hessian_jet_comp = _expand_jet(input_jet)
+    hessian_jet_comp = input_jet.get_hessian_jet()
     output_jet = g(hessian_jet_comp)
 
     # input_jet.hessian = [[2, 0], [0, 2]], sum = 4
@@ -460,7 +460,8 @@ def test_jet_decorator_with_jet_param_operations():
     t = jnp.array([1.0, 2.0])
     input_jet = function_to_jet(lambda x: x[0]**2, t)
 
-    value_jet, gradient_jet, _ = _expand_jet(input_jet)
+    value_jet = input_jet.get_value_jet()
+    gradient_jet = input_jet.get_gradient_jet()
     output_jet = g(value_jet, gradient_jet)
 
     # value = 1, gradient = [2, 0], sum = 2, total = 3
@@ -479,8 +480,8 @@ def test_jet_decorator_with_multiple_jet_params():
     jet1 = function_to_jet(lambda x: x**2, jnp.array(t))
     jet2 = function_to_jet(lambda x: x**3, jnp.array(t))
 
-    jet1_val, _, _ = _expand_jet(jet1)
-    jet2_val, _, _ = _expand_jet(jet2)
+    jet1_val = jet1.get_value_jet()
+    jet2_val = jet2.get_value_jet()
     output_jet = g(jet1_val, jet2_val)
 
     # jet1.value = 4, jet2.value = 8, sum = 12
@@ -498,7 +499,7 @@ def test_jet_decorator_mixed_jet_and_regular_params():
     t = 3.0
     input_jet = function_to_jet(lambda x: x**2, jnp.array(t))
 
-    value_jet, _, _ = _expand_jet(input_jet)
+    value_jet = input_jet.get_value_jet()
     output_jet = g(value_jet, 5.0)
 
     # jet.value = 9, scaled = 45
@@ -517,7 +518,8 @@ def test_jet_decorator_jet_param_returning_array():
     t = jnp.array([1.0, 2.0])
     input_jet = function_to_jet(lambda x: x[0] * x[1], t)
 
-    value_jet, gradient_jet, _ = _expand_jet(input_jet)
+    value_jet = input_jet.get_value_jet()
+    gradient_jet = input_jet.get_gradient_jet()
     output_jet = g(value_jet, gradient_jet)
 
     # value = 2, gradient = [2, 1], sum = 3
@@ -542,7 +544,7 @@ def test_jet_decorator_jet_param_composition():
     input_jet = function_to_jet(lambda x: x**3, jnp.array(t))
 
     # First extract gradient, then double it
-    _, gradient_jet_comp, _ = _expand_jet(input_jet)
+    gradient_jet_comp = input_jet.get_gradient_jet()
     grad_jet = extract_gradient(gradient_jet_comp)
     output_jet = double(grad_jet)
 
@@ -561,7 +563,7 @@ def test_jet_decorator_jet_param_norm_operation():
     t = jnp.array([3.0, 4.0])
     input_jet = function_to_jet(lambda x: x[0]**2 + x[1]**2, t)
 
-    _, gradient_jet_comp, _ = _expand_jet(input_jet)
+    gradient_jet_comp = input_jet.get_gradient_jet()
     output_jet = gradient_norm(gradient_jet_comp)
 
     # gradient = [6, 8], norm = 10
@@ -579,7 +581,7 @@ def test_jet_decorator_jet_param_quadratic_form():
     t = jnp.array([1.0, 2.0])
     input_jet = function_to_jet(lambda x: x[0]**3 + x[1]**3, t)
 
-    _, _, hessian_jet_comp = _expand_jet(input_jet)
+    hessian_jet_comp = input_jet.get_hessian_jet()
     output_jet = hessian_trace(hessian_jet_comp)
 
     # Hessian = [[6*x[0], 0], [0, 6*x[1]]] at [1, 2] = [[6, 0], [0, 12]]
@@ -603,7 +605,7 @@ def test_jet_decorator_jet_param_with_pytree_values():
         hessian={'a': jnp.zeros((2, 2)), 'b': jnp.zeros((2, 2))},
     )
 
-    value_jet_comp, _, _ = _expand_jet(input_jet)
+    value_jet_comp = input_jet.get_value_jet()
     output_jet = sum_dict_values(value_jet_comp)
 
     # 10 + 20 = 30
@@ -993,8 +995,8 @@ def test_jet_decorator_annotated_params_with_unused():
     jx = function_to_jet(lambda x: x, jnp.array(t))
     jy = function_to_jet(lambda x: x, jnp.array(2.0))  # unused
 
-    jx_val, _, _ = _expand_jet(jx)
-    jy_val, _, _ = _expand_jet(jy)
+    jx_val = jx.get_value_jet()
+    jy_val = jy.get_value_jet()
     out = cubic(jx_val, jy_val)
 
     expected_val = t**3

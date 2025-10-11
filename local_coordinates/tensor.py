@@ -9,7 +9,7 @@ from jaxtyping import Array, Float, PRNGKeyArray
 from linsdex import AbstractBatchableObject
 from local_coordinates.basis import BasisVectors, get_basis_transform
 from plum import dispatch
-from local_coordinates.jet import Jet, jet_decorator, _expand_jet
+from local_coordinates.jet import Jet, jet_decorator
 
 class TensorType(eqx.Module):
   k: int # Covariant index
@@ -95,19 +95,19 @@ class Tensor(AbstractBatchableObject):
     @jet_decorator
     def add_components(t_comps, other_comps):
       return t_comps + other_comps
-    t_comps_val, _, _ = _expand_jet(self.components)
-    other_comps_val, _, _ = _expand_jet(other.components)
+    t_comps_val = self.components.get_value_jet()
+    other_comps_val = other.components.get_value_jet()
     new_components = add_components(t_comps_val, other_comps_val)
     return Tensor(tensor_type=self.tensor_type, basis=self.basis, components=new_components)
 
 def function_multiply_tensor(T: Tensor, f: Jet) -> Tensor:
   @jet_decorator
-  def multiply_components(t_comps, f_comps):
-      return t_comps.__rmul__(f_comps)
+  def multiply_components(t_component_values, f_values):
+      return t_component_values*f_values
 
-  t_comps_val, _, _ = _expand_jet(T.components)
-  f_comps_val, _, _ = _expand_jet(f)
-  new_components = multiply_components(t_comps_val, f_comps_val)
+  t_comps_vals = T.components.get_value_jet()
+  f_vals = f.get_value_jet()
+  new_components = multiply_components(t_comps_vals, f_vals)
   return Tensor(tensor_type=T.tensor_type, basis=T.basis, components=new_components)
 
 @dispatch
@@ -162,7 +162,7 @@ def change_coordinates(tensor: Tensor, new_basis: BasisVectors) -> Tensor:
   def transform_components(components) -> Array:
     return jnp.einsum(einsum_str, components, *transforms)
 
-  t_comps_val, _, _ = _expand_jet(tensor.components)
+  t_comps_val = tensor.components.get_value_jet()
   new_components = transform_components(t_comps_val)
 
   return Tensor(

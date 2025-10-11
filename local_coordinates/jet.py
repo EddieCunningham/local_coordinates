@@ -214,6 +214,26 @@ class Jet(AbstractBatchableObject):
   def __mul__(self, other):
     raise TypeError("Jet can only be right-multiplied by a scalar")
 
+  def get_value_jet(self) -> "Jet":
+    return Jet(
+      value=self.value,
+      gradient=self.gradient,
+      hessian=self.hessian
+    )
+
+  def get_gradient_jet(self) -> "Jet":
+    return Jet(
+      value=self.gradient,
+      gradient=self.hessian,
+      hessian=None
+    )
+
+  def get_hessian_jet(self) -> "Jet":
+    return Jet(
+      value=self.hessian,
+      gradient=None,
+      hessian=None
+    )
 
 def function_to_jet(f: Callable[[Array], Any], x: Array) -> Jet:
   """Return a PyTree of Jet objects matching f's output structure at point x.

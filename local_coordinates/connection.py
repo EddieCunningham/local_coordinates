@@ -9,7 +9,7 @@ from linsdex import AbstractBatchableObject
 from local_coordinates.basis import BasisVectors, get_basis_transform
 from plum import dispatch
 from local_coordinates.tensor import Tensor, change_coordinates
-from local_coordinates.jet import Jet, _expand_jet
+from local_coordinates.jet import Jet
 from local_coordinates.jet import jet_decorator
 
 class Connection(AbstractBatchableObject):
@@ -36,11 +36,14 @@ class Connection(AbstractBatchableObject):
     def components(gamma_val, x_val, y_val, y_grad_val) -> Array:
       term1 = jnp.einsum("i,ki->k", x_val, y_grad_val)
       term2 = jnp.einsum("kij,i,j->k", gamma_val, x_val, y_val)
+      # TODO: Need to add parts related to Lie derivative of X and Y!
+      assert 0, "Not implemented"
       return term1 + term2
 
-    gamma_value_jet, _, _ = _expand_jet(self.christoffel_symbols)
-    x_value_jet, _, _ = _expand_jet(X.components)
-    y_value_jet, y_gradient_jet, _ = _expand_jet(Y.components)
+    gamma_value_jet = self.christoffel_symbols.get_value_jet()
+    x_value_jet = X.components.get_value_jet()
+    y_value_jet = Y.components.get_value_jet()
+    y_gradient_jet = Y.components.get_gradient_jet()
     new_components = components(gamma_value_jet, x_value_jet, y_value_jet, y_gradient_jet)
     return Tensor(X.tensor_type, self.basis, new_components)
 
@@ -58,7 +61,8 @@ def change_coordinates(connection: Connection, new_basis: BasisVectors) -> Conne
     term2 = jnp.einsum("cab,ai,bj,kc->kij", christoffel_symbols_val, T_val, T_val, T_val)
     return term1 + term2
 
-  cs_value_jet, _, _ = _expand_jet(connection.christoffel_symbols)
-  T_value_jet, T_gradient_jet, _ = _expand_jet(T_jet)
+  cs_value_jet = connection.christoffel_symbols.get_value_jet()
+  T_value_jet = T_jet.get_value_jet()
+  T_gradient_jet = T_jet.get_gradient_jet()
   new_christoffel_symbols = get_components(cs_value_jet, T_value_jet, T_gradient_jet)
   return Connection(basis=new_basis, christoffel_symbols=new_christoffel_symbols)
