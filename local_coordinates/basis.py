@@ -8,6 +8,7 @@ from jaxtyping import Array, Float, PRNGKeyArray
 from linsdex import AbstractBatchableObject
 from plum import dispatch
 from local_coordinates.jet import Jet, jet_decorator
+
 class BasisVectors(AbstractBatchableObject):
   """
   A set of basis vectors for a tangent space. The basis vectors are always written
@@ -48,6 +49,12 @@ def get_basis_transform(from_basis: BasisVectors, to_basis: BasisVectors) -> Jet
   )
   return new_components
 
+def get_standard_basis(p: Float[Array, "N"]) -> BasisVectors:
+  """
+  Get the standard basis at a given point.
+  """
+  return BasisVectors(p=p, components=Jet(value=jnp.eye(p.shape[0]), gradient=jnp.zeros((p.shape[0], p.shape[0], p.shape[0])), hessian=jnp.zeros((p.shape[0], p.shape[0], p.shape[0], p.shape[0]))))
+
 def make_coordinate_basis(basis: BasisVectors) -> BasisVectors:
   """
   Make a commuting frame (a coordinate basis) from a given basis.
@@ -82,4 +89,3 @@ def change_basis(obj: Any, target_basis: BasisVectors) -> Any:
   Change the basis of an object to a new basis.
   """
   pass
-

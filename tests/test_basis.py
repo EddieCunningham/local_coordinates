@@ -1,6 +1,6 @@
 import jax.numpy as jnp
-from local_coordinates.basis import BasisVectors, get_basis_transform, make_coordinate_basis
-from local_coordinates.jet import Jet, function_to_jet
+from local_coordinates.basis import BasisVectors, get_basis_transform, make_coordinate_basis, get_standard_basis
+from local_coordinates.jet import Jet, function_to_jet, jet_decorator
 import pytest
 import jax
 import jax.random as random
@@ -215,3 +215,94 @@ def test_get_basis_transform_with_derivatives():
   assert jnp.allclose(transform_jet.value, expected_transform_jet.value)
   assert jnp.allclose(transform_jet.gradient, expected_transform_jet.gradient)
   assert jnp.allclose(transform_jet.hessian, expected_transform_jet.hessian)
+
+def test_basis_transform_via_inverse():
+  # Test transforming from a basis to the standard basis
+  p = jnp.array([0., 0.])
+  key = random.key(0)
+  k1, k2, k3 = random.split(key, 3)
+
+  basis_vectors = random.normal(k1, (2, 2))
+  gradient = random.normal(k2, (2, 2, 2))
+  hessian = random.normal(k3, (2, 2, 2, 2))
+  components_jet = Jet(value=basis_vectors, gradient=gradient, hessian=hessian)
+  basis = BasisVectors(p=p, components=components_jet)
+
+  # Create the standard basis
+  standard_basis = BasisVectors(p=p, components=Jet(value=jnp.eye(2), gradient=jnp.zeros((2, 2, 2)), hessian=jnp.zeros((2, 2, 2, 2))))
+
+  # Get the transformation to the standard basis
+  transform = get_basis_transform(basis, standard_basis)
+  inverse_transform = get_basis_transform(standard_basis, basis)
+
+  @jet_decorator
+  def blah(transform_vals, inv_transform_vals):
+    return transform_vals @ inv_transform_vals
+
+  eye = blah(transform.get_value_jet(), inverse_transform.get_value_jet())
+
+  # In these coordinates,
+  assert jnp.allclose(eye.value, jnp.eye(2))
+  assert jnp.allclose(eye.gradient, 0.0)
+  assert jnp.allclose(eye.hessian, 0.0)
+
+
+def test_get_standard_basis():
+  p = jnp.array([1.0, 2.0])
+  basis = get_standard_basis(p)
+
+  # Point is preserved
+  assert jnp.allclose(basis.p, p)
+
+  # Value is identity, derivatives are zero with correct shapes
+  assert jnp.allclose(basis.components.value, jnp.eye(2))
+  assert basis.components.gradient.shape == (2, 2, 2)
+  assert basis.components.hessian.shape == (2, 2, 2, 2)
+  assert jnp.allclose(basis.components.gradient, 0.0)
+  assert jnp.allclose(basis.components.hessian, 0.0)
+
+
+def test_lie_bracket():
+  # Construct a coordinate basis
+
+  def nonlin(x):
+    return jnp.log1p(jnp.abs(x))*jnp.sign(x)
+
+  key = random.key(0)
+  k1, k2 = random.split(key)
+  mat1 = random.normal(k1, (2, 2))
+  mat2 = random.normal(k2, (2, 2))
+  b1 = random.normal(k1, (2,))
+  b2 = random.normal(k2, (2,))
+
+  def inv_chart(x):
+    h = nonlin(mat1@x + b1)
+    return nonlin(mat2@h + b2)
+
+  # The point in the coordinate space to evaluate derivatives
+  x0 = jnp.array([0.5, 0.5])
+
+  # Create Jet objects for each basis using function_to_jet
+  inv_coord_vector_jet = function_to_jet(inv_chart, x0) # dz/dx
+
+  @jet_decorator
+  def invert_basis(coord_grads):
+    return jnp.linalg.inv(coord_grads)
+
+  coord_vector_jet = invert_basis(inv_coord_vector_jet.get_gradient_jet()) # dx/dz
+
+  # Create BasisVectors objects
+  p = jnp.array([0., 0.]) # this is arbitrary for this test
+  basis = BasisVectors(p=p, components=coord_vector_jet)
+
+  @jet_decorator
+  def lie_bracket_components(basis_vals, basis_grads):
+    term1 = jnp.einsum("ai,kja->kij", basis_vals, basis_grads)
+    term2 = jnp.einsum("aj,kia->kij", basis_vals, basis_grads)
+    return term1 - term2
+
+  basis_vals = basis.components.get_value_jet()
+  basis_grads = basis.components.get_gradient_jet()
+  lie_bracket_components = lie_bracket_components(basis_vals, basis_grads)
+
+  assert jnp.allclose(lie_bracket_components.value, 0.0)
