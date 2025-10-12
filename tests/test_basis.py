@@ -1,5 +1,5 @@
 import jax.numpy as jnp
-from local_coordinates.basis import BasisVectors, get_basis_transform, make_coordinate_basis, get_standard_basis
+from local_coordinates.basis import BasisVectors, get_basis_transform, make_coordinate_basis, get_standard_basis, get_lie_bracket_components
 from local_coordinates.jet import Jet, function_to_jet, jet_decorator
 import pytest
 import jax
@@ -306,3 +306,71 @@ def test_lie_bracket():
   lie_bracket_components = lie_bracket_components(basis_vals, basis_grads)
 
   assert jnp.allclose(lie_bracket_components.value, 0.0)
+
+
+def test_get_lie_bracket_components():
+  # Construct a coordinate basis and verify the Lie bracket components vanish
+
+  def nonlin(x):
+    return jnp.log1p(jnp.abs(x))*jnp.sign(x)
+
+  key = random.key(0)
+  k1, k2 = random.split(key)
+  mat1 = random.normal(k1, (2, 2))
+  mat2 = random.normal(k2, (2, 2))
+  b1 = random.normal(k1, (2,))
+  b2 = random.normal(k2, (2,))
+
+  def inv_chart(x):
+    h = nonlin(mat1@x + b1)
+    return nonlin(mat2@h + b2)
+
+  # The point in the coordinate space to evaluate derivatives
+  x0 = jnp.array([0.5, 0.5])
+
+  # Create Jet objects for each basis using function_to_jet
+  inv_coord_vector_jet = function_to_jet(inv_chart, x0) # dz/dx
+
+  @jet_decorator
+  def invert_basis(coord_grads):
+    return jnp.linalg.inv(coord_grads)
+
+  coord_vector_jet = invert_basis(inv_coord_vector_jet.get_gradient_jet()) # dx/dz
+
+  # Create BasisVectors object
+  p = jnp.array([0., 0.]) # arbitrary for this test
+  basis = BasisVectors(p=p, components=coord_vector_jet)
+
+  # Compute Lie bracket components via library function and check they vanish
+  c_jet = get_lie_bracket_components(basis)
+  assert jnp.allclose(c_jet.value, 0.0)
+
+
+def test_get_lie_bracket_components_constant_frame_zero():
+  # For a constant frame E (no spatial variation), the Lie bracket vanishes
+  p = jnp.array([0.0, 0.0])
+  A = jnp.array([[2.0, -1.0],
+                 [1.5,  3.0]])
+  dA = jnp.zeros((2, 2, 2))
+  basis = BasisVectors(p=p, components=Jet(value=A, gradient=dA, hessian=None))
+  c_jet = get_lie_bracket_components(basis)
+  assert jnp.allclose(c_jet.value, 0.0)
+
+
+def test_get_lie_bracket_components_simple_noncommuting_frame():
+  # E1 = (1, 0), E2 = (x, 1) -> [E1,E2] = (1,0) = E1
+  p = jnp.array([0.3, -0.2])
+  E = jnp.array([[1.0, p[0]], # entry (0, 1) is p[0]
+                 [0.0, 1.0]])
+  dE = jnp.zeros((2, 2, 2))
+  dE = dE.at[0, 1, 0].set(1.0)  # ∂_x E2^x = 1
+
+  basis = BasisVectors(p=p, components=Jet(value=E, gradient=dE, hessian=None))
+  out = get_lie_bracket_components(basis)
+  c = out.value  # shape (k, i, j)
+
+  expected = jnp.zeros_like(c)
+  # c^0_{01} = +1, c^0_{10} = -1 (where k=0 corresponds to the first basis vector E_0)
+  expected = expected.at[0, 0, 1].set(1.0)
+  expected = expected.at[0, 1, 0].set(-1.0)
+  assert jnp.allclose(c, expected)
