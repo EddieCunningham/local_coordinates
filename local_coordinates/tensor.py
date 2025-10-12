@@ -165,7 +165,8 @@ def change_coordinates(tensor: Tensor, new_basis: BasisVectors) -> Tensor:
   t_comps_val = tensor.components.get_value_jet()
   new_components = transform_components(t_comps_val)
 
-  return Tensor(
+  tensor_class = type(tensor) # e.g. RiemannianMetric
+  return tensor_class(
     tensor_type=tensor.tensor_type,
     basis=new_basis,
     components=new_components
