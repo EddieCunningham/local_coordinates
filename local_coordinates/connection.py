@@ -81,27 +81,25 @@ def get_levi_civita_connection(metric: RiemannianMetric) -> Connection:
   @jet_decorator
   def get_christoffel_symbols(c_kij_val, g_ij_val, g_ijk_grad) -> Array:
     """
-    \Gamma_{kij} = 1/2 (g_{jk,i} + g_{ij,j} - g_{ij,k} + c_{kij} - c_{jik} - c_{ijk})
+    Gamma_{kij} = 1/2 (g_{jk,i} + g_{ij,j} - g_{ij,k} + c_{kij} - c_{jik} - c_{ijk})
     """
-    c_kij_lower = jnp.einsum("kl,lij->kij", g_ij_val, c_kij_val)
+    ginv = jnp.linalg.inv(g_ij_val)              # g^{kl}
 
-    term1 = jnp.einsum("ijk->jki", g_ijk_grad)
-    term2 = jnp.einsum("ijk->ikj", g_ijk_grad)
-    term3 = -jnp.einsum("ijk->ijk", g_ijk_grad)
+    # Metric derivative terms: T1+T2−T3 with A[i,j,k] = g_{ij,k}
+    T1 = jnp.einsum("kl,jli->kij", ginv, g_ijk_grad)   # g^{kl} ∂_i g_{jl}
+    T2 = jnp.einsum("kl,ilj->kij", ginv, g_ijk_grad)   # g^{kl} ∂_j g_{il}
+    T3 = jnp.einsum("kl,ijl->kij", ginv, g_ijk_grad)   # g^{kl} ∂_l g_{ij}
 
-    term4 = jnp.einsum("kij->kij", c_kij_lower)
-    term5 = -jnp.einsum("kij->jik", c_kij_lower)
-    term6 = -jnp.einsum("kij->ijk", c_kij_lower)
+    # Bracket terms: +C^k_{ij} − g^{kl} g_{jm} C^m_{il} − g^{kl} g_{im} C^m_{jl}
+    B1 = c_kij_val
+    B2 = jnp.einsum("kl, jm, mil -> kij", ginv, g_ij_val, c_kij_val)             # − g^{kl} g_{jm} c_kij_val^m_{il}
+    B3 = jnp.einsum("kl,im,mjl->kij", ginv, g_ij_val, c_kij_val)  # − g^{kl} g_{im} C^m_{jl}
 
-    out_lower = (term1 + term2 + term3 + term4 + term5 + term6) / 2
-
-    ginv_kl = jnp.linalg.inv(g_ij_val)
-    out_upper = jnp.einsum("kl,lij->kij", ginv_kl, out_lower)
-    return out_upper
+    gamma_upper = 0.5 * (T1 + T2 - T3 + B1 - B2 - B3)
+    return gamma_upper
 
   c_kij_val = c_kij.get_value_jet()
   g_ij_val = metric.components.get_value_jet()
-  # Use the 3D gradient tensor g_{ij,k} as the third argument
   g_ijk_grad = g_ijk.get_value_jet()
   christoffel_symbols: Jet = get_christoffel_symbols(c_kij_val, g_ij_val, g_ijk_grad)
   return Connection(basis=basis, christoffel_symbols=christoffel_symbols)

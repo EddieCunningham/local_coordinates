@@ -517,8 +517,8 @@ def jet_decorator(f: Callable) -> Callable:
 
     # Debug prints: which groups are used and shapes of primals
     primals_shapes = jtu.tree_map(lambda v: getattr(v, 'shape', None), primals)
-    print(f"[jet] f={getattr(f, '__name__', '<anon>')} used_groups={used_groups} group_has_grad={group_has_grad}")
-    print(f"[jet] primals_shapes={primals_shapes}")
+    # print(f"[jet] f={getattr(f, '__name__', '<anon>')} used_groups={used_groups} group_has_grad={group_has_grad}")
+    # print(f"[jet] primals_shapes={primals_shapes}")
 
     # If any used group lacks gradients, we cannot compute derivatives safely
     if any(used and (not has_g) for used, has_g in zip(used_groups, group_has_grad)):
@@ -575,8 +575,8 @@ def jet_decorator(f: Callable) -> Callable:
 
     # Debug prints: N and tangent shapes
     tg_shapes = jtu.tree_map(lambda v: getattr(v, 'shape', None), total_grad_tangent)
-    print(f"[jet] N={N} active_groups={[i for i, u in enumerate(used_groups) if u]}")
-    print(f"[jet] total_grad_tangent_shapes={tg_shapes}")
+    # print(f"[jet] N={N} active_groups={[i for i, u in enumerate(used_groups) if u]}")
+    # print(f"[jet] total_grad_tangent_shapes={tg_shapes}")
     # Note: primals may be a PyTree (dict/tuple/list) or eqx.Module; do not assume .ndim.
     # Shape consistency is enforced leafwise elsewhere (Jet.__check_init__).
 
