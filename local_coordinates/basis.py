@@ -39,7 +39,7 @@ def get_lie_bracket_components(basis: BasisVectors) -> Jet:
   c_{ij}^k where [E_i, E_j] = c_{ij}^k E_k.
   """
   @jet_decorator
-  def get_components(basis_vals, basis_grads) -> Array:
+  def get_components(basis_vals: Array, basis_grads: Array) -> Array:
     term1 = jnp.einsum("ai,kja->kij", basis_vals, basis_grads)
     term2 = jnp.einsum("aj,kia->kij", basis_vals, basis_grads)
     return term1 - term2

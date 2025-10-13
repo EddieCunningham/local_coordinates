@@ -307,6 +307,20 @@ def test_lie_bracket():
 
   assert jnp.allclose(lie_bracket_components.value, 0.0)
 
+def test_get_lie_bracket_components_random():
+
+  # Create BasisVectors object
+  p = jnp.array([0., 0.]) # arbitrary for this test
+  key = random.key(0)
+  vals = random.normal(key, (2, 2))
+  grads = random.normal(key, (2, 2, 2))
+  hessians = random.normal(key, (2, 2, 2, 2))
+
+  basis = BasisVectors(p=p, components=Jet(value=vals, gradient=grads, hessian=hessians))
+
+  # Compute Lie bracket components via library function and check they vanish
+  c_jet = get_lie_bracket_components(basis)
+
 
 def test_get_lie_bracket_components():
   # Construct a coordinate basis and verify the Lie bracket components vanish
