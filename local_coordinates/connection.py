@@ -26,15 +26,15 @@ class Connection(AbstractBatchableObject):
     return self.basis.batch_size
 
   def covariant_derivative(self, X: Annotated[Tensor, "0 1"], Y: Annotated[Tensor, "0 1"]) -> Tensor:
+    """
+    TODO: Handle covariant derivatives of general tensors.
+    """
+
     assert X.tensor_type.is_vector(), f"X must be a vector, got {X.tensor_type}"
 
-    # Convert everything to local coordinates
-    standard_basis = get_standard_basis(self.basis.p)
-
     # Make sure X and Y are written in the same basis
-    X: Tensor = change_coordinates(X, standard_basis)
-    Y: Tensor = change_coordinates(Y, standard_basis)
-    conn: Connection = change_coordinates(self, standard_basis)
+    X: Tensor = change_coordinates(X, self.basis)
+    Y: Tensor = change_coordinates(Y, self.basis)
 
     # Compute the covariant derivative
     @jet_decorator
@@ -43,12 +43,12 @@ class Connection(AbstractBatchableObject):
       term2 = jnp.einsum("kij,i,j->k", gamma_val, x_val, y_val)
       return term1 + term2
 
-    gamma_value_jet = conn.christoffel_symbols.get_value_jet()
+    gamma_value_jet = self.christoffel_symbols.get_value_jet()
     x_value_jet = X.components.get_value_jet()
     y_value_jet = Y.components.get_value_jet()
     y_gradient_jet = Y.components.get_gradient_jet()
     new_components = components(gamma_value_jet, x_value_jet, y_value_jet, y_gradient_jet)
-    return Tensor(X.tensor_type, standard_basis, new_components)
+    return Tensor(X.tensor_type, self.basis, new_components)
 
 @dispatch
 def change_coordinates(connection: Connection, new_basis: BasisVectors) -> Connection:
@@ -92,7 +92,7 @@ def get_levi_civita_connection(metric: RiemannianMetric) -> Connection:
 
     # Bracket terms: +C^k_{ij} − g^{kl} g_{jm} C^m_{il} − g^{kl} g_{im} C^m_{jl}
     B1 = c_kij_val
-    B2 = jnp.einsum("kl, jm, mil -> kij", ginv, g_ij_val, c_kij_val)             # − g^{kl} g_{jm} c_kij_val^m_{il}
+    B2 = jnp.einsum("kl,jm,mil->kij", ginv, g_ij_val, c_kij_val)  # − g^{kl} g_{jm} c_kij_val^m_{il}
     B3 = jnp.einsum("kl,im,mjl->kij", ginv, g_ij_val, c_kij_val)  # − g^{kl} g_{im} C^m_{jl}
 
     gamma_upper = 0.5 * (T1 + T2 - T3 + B1 - B2 - B3)

@@ -3,6 +3,7 @@ from local_coordinates.basis import get_standard_basis
 from local_coordinates.connection import Connection, get_levi_civita_connection
 from local_coordinates.jet import Jet
 from local_coordinates.metric import RiemannianMetric
+from local_coordinates.tensor import Tensor, TensorType
 
 
 def test_connection_basic_construction():
@@ -169,6 +170,126 @@ def test_get_levi_civita_connection_hyperbolic_half_plane():
   expected = expected.at[1, 1, 1].set(-1.0 / y)   # Γ^y_{y y}
 
   assert jnp.allclose(gamma, expected, atol=1e-6)
+
+
+def test_covariant_derivative_zero_connection_matches_directional_derivative():
+  # Basis: standard Cartesian; Γ = 0
+  p = jnp.array([0.0, 0.0])
+  basis = get_standard_basis(p)
+
+  Gamma = jnp.zeros((2, 2, 2))
+  conn = Connection(basis=basis, christoffel_symbols=Jet(value=Gamma, gradient=None, hessian=None))
+
+  # X components (vector)
+  X_val = jnp.array([1.2, -0.7])
+  X = Jet(value=X_val, gradient=None, hessian=None)
+  vec = TensorType(1, 0)
+  X_tensor = Tensor(tensor_type=vec, basis=basis, components=X)
+
+  # Y components and gradient (∂_i Y^k)
+  Y_val = jnp.array([2.0, -3.0])
+  Y_grad = jnp.array([[0.5, 1.0],   # ∂_x Y^x, ∂_y Y^x
+                      [2.0, 0.25]]) # ∂_x Y^y, ∂_y Y^y
+  Y = Jet(value=Y_val, gradient=Y_grad, hessian=None)
+  Y_tensor = Tensor(tensor_type=vec, basis=basis, components=Y)
+
+  out = Connection(basis=basis, christoffel_symbols=Jet(value=Gamma, gradient=None, hessian=None)).covariant_derivative(X_tensor, Y_tensor)
+  expected = jnp.einsum("i,ki->k", X_val, Y_grad)
+  assert jnp.allclose(out.components.value, expected)
+
+
+def test_covariant_derivative_with_connection_matches_formula():
+  # Basis: standard; simple nonzero Γ
+  p = jnp.array([0.0, 0.0])
+  basis = get_standard_basis(p)
+
+  Gamma = jnp.zeros((2, 2, 2))
+  Gamma = Gamma.at[0, 0, 0].set(2.0)  # Γ^x_{xx} = 2
+  Gamma = Gamma.at[1, 0, 1].set(-1.0) # Γ^y_{x y} = -1
+  conn = Connection(basis=basis, christoffel_symbols=Jet(value=Gamma, gradient=None, hessian=None))
+
+  X_val = jnp.array([0.3, -1.1])
+  vec = TensorType(1, 0)
+  X_tensor = Tensor(tensor_type=vec, basis=basis, components=Jet(value=X_val, gradient=None, hessian=None))
+
+  Y_val = jnp.array([1.4, 0.6])
+  Y_grad = jnp.array([[0.2, 0.1],
+                      [0.0, -0.4]])
+  Y_tensor = Tensor(tensor_type=vec, basis=basis, components=Jet(value=Y_val, gradient=Y_grad, hessian=None))
+
+  out = Connection(basis=basis, christoffel_symbols=Jet(value=Gamma, gradient=None, hessian=None)).covariant_derivative(X_tensor, Y_tensor)
+  term1 = jnp.einsum("i,ki->k", X_val, Y_grad)
+  term2 = jnp.einsum("kij,i,j->k", Gamma, X_val, Y_val)
+  expected = term1 + term2
+  assert jnp.allclose(out.components.value, expected)
+
+
+def test_covariant_derivative_polar_plane_lc_connection():
+  # Polar plane G = diag(1, r^2)
+  r = 2.0
+  phi = 0.3
+  p = jnp.array([r, phi])
+  basis = get_standard_basis(p)
+
+  g_val = jnp.array([[1.0, 0.0], [0.0, r*r]])
+  g_grad = jnp.zeros((2, 2, 2))
+  g_grad = g_grad.at[1, 1, 0].set(2.0 * r)
+  metric = RiemannianMetric(basis=basis, components=Jet(value=g_val, gradient=g_grad, hessian=jnp.zeros((2,2,2,2))))
+
+  # Ground-truth Christoffel symbols for polar plane (r, φ):
+  Gamma = jnp.zeros((2, 2, 2))
+  Gamma = Gamma.at[0, 1, 1].set(-r)     # Γ^r_{φφ} = -r
+  Gamma = Gamma.at[1, 0, 1].set(1.0/r)  # Γ^φ_{rφ} = 1/r
+  Gamma = Gamma.at[1, 1, 0].set(1.0/r)  # Γ^φ_{φr} = 1/r
+
+  # Choose X, Y
+  X_val = jnp.array([1.0, 0.5])
+  Y_val = jnp.array([0.7, -1.2])
+  # Supply Y gradient (∂_i Y^k); arbitrary but fixed
+  Y_grad = jnp.array([[0.3, -0.2],
+                      [0.4,  0.1]])
+  vec = TensorType(1, 0)
+  X_tensor = Tensor(tensor_type=vec, basis=basis, components=Jet(value=X_val, gradient=None, hessian=None))
+  Y_tensor = Tensor(tensor_type=vec, basis=basis, components=Jet(value=Y_val, gradient=Y_grad, hessian=None))
+
+  out = Connection(basis=basis, christoffel_symbols=Jet(value=Gamma, gradient=None, hessian=None)).covariant_derivative(X_tensor, Y_tensor)
+  expected = jnp.einsum("i,ki->k", X_val, Y_grad) + jnp.einsum("kij,i,j->k", Gamma, X_val, Y_val)
+  assert jnp.allclose(out.components.value, expected)
+
+
+def test_covariant_derivative_hyperbolic_half_plane_ground_truth():
+  # Upper half-plane metric: G = (dx^2 + dy^2)/y^2 with coords (x,y)
+  x = 0.4
+  y = 1.7
+  p = jnp.array([x, y])
+  basis = get_standard_basis(p)
+
+  # Build a Levi-Civita connection for the metric (used only to evaluate ∇, not for Γ ground truth)
+  g_val = jnp.array([[1.0/(y*y), 0.0], [0.0, 1.0/(y*y)]])
+  g_grad = jnp.zeros((2, 2, 2))
+  dgy = -2.0/(y*y*y)
+  g_grad = g_grad.at[0, 0, 1].set(dgy)
+  g_grad = g_grad.at[1, 1, 1].set(dgy)
+  metric = RiemannianMetric(basis=basis, components=Jet(value=g_val, gradient=g_grad, hessian=jnp.zeros((2,2,2,2))))
+  # Analytic Christoffels: Γ^x_{xy}=Γ^x_{yx}=-1/y; Γ^y_{xx}=1/y; Γ^y_{yy}=-1/y
+  Gamma = jnp.zeros((2, 2, 2))
+  Gamma = Gamma.at[0, 0, 1].set(-1.0/y)
+  Gamma = Gamma.at[0, 1, 0].set(-1.0/y)
+  Gamma = Gamma.at[1, 0, 0].set(1.0/y)
+  Gamma = Gamma.at[1, 1, 1].set(-1.0/y)
+
+  # Choose X, Y and Y_grad
+  X_val = jnp.array([0.8, -0.3])
+  Y_val = jnp.array([1.1, -0.5])
+  Y_grad = jnp.array([[0.2, 0.0],
+                      [0.1, -0.15]])
+  vec = TensorType(1, 0)
+  X_tensor = Tensor(tensor_type=vec, basis=basis, components=Jet(value=X_val, gradient=None, hessian=None))
+  Y_tensor = Tensor(tensor_type=vec, basis=basis, components=Jet(value=Y_val, gradient=Y_grad, hessian=None))
+
+  out = Connection(basis=basis, christoffel_symbols=Jet(value=Gamma, gradient=None, hessian=None)).covariant_derivative(X_tensor, Y_tensor)
+  expected = jnp.einsum("i,ki->k", X_val, Y_grad) + jnp.einsum("kij,i,j->k", Gamma, X_val, Y_val)
+  assert jnp.allclose(out.components.value, expected)
 
 
 def test_get_levi_civita_connection_euclidean_cartesian_zero():
