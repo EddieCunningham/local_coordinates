@@ -1,7 +1,7 @@
 import jax.numpy as jnp
 import pytest
-from local_coordinates.metric import RiemannianMetric
-from local_coordinates.basis import BasisVectors, DualBasis
+from local_coordinates.metric import RiemannianMetric, change_coordinates
+from local_coordinates.basis import BasisVectors, DualBasis, get_basis_transform
 from local_coordinates.jet import Jet
 
 def test_riemannian_metric_creation():
@@ -72,3 +72,24 @@ def test_metric_batching():
   assert metric.batch_size == 3
   assert metric.basis.p.shape == (3, 2)
   assert metric.components.value.shape == (3, 2, 2)
+
+
+def test_change_coordinates_metric_dual_basis():
+  p = jnp.array([0., 0.])
+  # Define two dual bases from vector bases B1, B2
+  B1 = jnp.array([[1.0, 0.5], [0.0, 1.0]])
+  B2 = jnp.array([[0.0, 1.0], [1.0, 0.0]])
+  theta1 = DualBasis(p=p, components=Jet(value=jnp.linalg.inv(B1), gradient=None, hessian=None))
+  theta2 = DualBasis(p=p, components=Jet(value=jnp.linalg.inv(B2), gradient=None, hessian=None))
+
+  # Metric in basis theta1
+  g = jnp.array([[2.0, 0.5], [0.5, 1.0]])
+  metric = RiemannianMetric(basis=theta1, components=Jet(value=g, gradient=None, hessian=None))
+
+  # Transform
+  metric2 = change_coordinates(metric, theta2)
+
+  # Expected: g' = T_dual^T g T_dual, where T_dual = theta1 @ inv(theta2)
+  T_dual = get_basis_transform(theta1, theta2).value
+  expected = T_dual.T @ g @ T_dual
+  assert jnp.allclose(metric2.components.value, expected)

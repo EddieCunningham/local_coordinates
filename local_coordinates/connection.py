@@ -6,7 +6,7 @@ from jax import random
 import equinox as eqx
 from jaxtyping import Array, Float, PRNGKeyArray
 from linsdex import AbstractBatchableObject
-from local_coordinates.basis import BasisVectors, get_basis_transform, get_standard_basis, get_lie_bracket_components
+from local_coordinates.basis import BasisVectors, DualBasis, get_basis_transform, get_standard_basis, get_lie_bracket_components
 from plum import dispatch
 from local_coordinates.tensor import Tensor, change_coordinates
 from local_coordinates.jet import Jet
@@ -72,7 +72,8 @@ def change_coordinates(connection: Connection, new_basis: BasisVectors) -> Conne
 
 def get_levi_civita_connection(metric: RiemannianMetric) -> Connection:
   # Get the lie bracket components of the basis
-  basis: BasisVectors = metric.basis
+  dual_basis: DualBasis = metric.basis
+  basis: BasisVectors = dual_basis.to_primal()
   c_kij: Jet = get_lie_bracket_components(basis)
 
   # Get the metric components

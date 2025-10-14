@@ -335,6 +335,36 @@ def test_dual_and_vector_transforms_pairing_identity():
   assert jnp.allclose(Theta_coords_to @ E_coords_to, jnp.eye(2))
 
 
+def test_basis_dual_roundtrip():
+  p = jnp.array([0., 0.])
+  B = jnp.array([[1.0, 0.5], [0.0, 1.0]])
+  vec = BasisVectors(p=p, components=Jet(value=B, gradient=None, hessian=None))
+  dual = vec.to_dual()
+  vec_back = dual.to_primal()
+  assert jnp.allclose(dual.components.value @ vec.components.value, jnp.eye(2))
+  assert jnp.allclose(vec_back.components.value, B)
+
+
+def test_dual_primal_pairing_invariance_under_transform():
+  p = jnp.array([0., 0.])
+  B1 = jnp.array([[1.0, 0.5], [0.0, 1.0]])
+  B2 = jnp.array([[0.0, 1.0], [1.0, 0.0]])
+  vec1 = BasisVectors(p=p, components=Jet(value=B1, gradient=None, hessian=None))
+  vec2 = BasisVectors(p=p, components=Jet(value=B2, gradient=None, hessian=None))
+  dual1 = vec1.to_dual()
+  dual2 = vec2.to_dual()
+
+  T_vec = get_basis_transform(vec1, vec2).value
+  T_dual = get_basis_transform(dual1, dual2).value
+
+  # Coordinates of identity pairing transform accordingly
+  E = jnp.eye(2)
+  Theta = jnp.eye(2)
+  E2 = T_vec @ E
+  Theta2 = Theta @ T_dual
+  assert jnp.allclose(Theta2 @ E2, jnp.eye(2))
+
+
 def test_lie_bracket():
   # Construct a coordinate basis
 

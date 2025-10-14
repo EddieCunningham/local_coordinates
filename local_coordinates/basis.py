@@ -33,6 +33,14 @@ class BasisVectors(AbstractBatchableObject):
     else:
       raise ValueError(f"Invalid number of dimensions: {self.p.ndim}")
 
+  def to_dual(self) -> 'DualBasis':
+    @jet_decorator
+    def to_dual_components(E_vals):
+      return jnp.linalg.inv(E_vals)
+    comps_val = self.components.get_value_jet()
+    dual_components = to_dual_components(comps_val)
+    return DualBasis(p=self.p, components=dual_components)
+
 
 class DualBasis(AbstractBatchableObject):
   """
@@ -58,6 +66,14 @@ class DualBasis(AbstractBatchableObject):
       return None
     else:
       raise ValueError(f"Invalid number of dimensions: {self.p.ndim}")
+
+  def to_primal(self) -> BasisVectors:
+    @jet_decorator
+    def to_primal_components(theta_vals):
+      return jnp.linalg.inv(theta_vals)
+    comps_val = self.components.get_value_jet()
+    primal_components = to_primal_components(comps_val)
+    return BasisVectors(p=self.p, components=primal_components)
 
 def get_lie_bracket_components(basis: BasisVectors) -> Jet:
   """
@@ -90,6 +106,8 @@ def get_basis_transform(from_basis: BasisVectors, to_basis: BasisVectors) -> Jet
   """
   Get the transformation matrix from one set of basis vectors to another.
   """
+  assert isinstance(from_basis, BasisVectors), f"from_basis must be a BasisVectors, got {type(from_basis)}"
+
   @jet_decorator
   def get_components(from_components, to_components) -> Array:
     return jnp.linalg.solve(to_components, from_components)

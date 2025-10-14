@@ -8,7 +8,7 @@ from jaxtyping import Array, Float, PRNGKeyArray
 from linsdex import AbstractBatchableObject
 from plum import dispatch
 from local_coordinates.jet import Jet, jet_decorator
-from local_coordinates.basis import BasisVectors, DualBasis
+from local_coordinates.basis import BasisVectors, DualBasis, get_basis_transform
 from local_coordinates.tensor import Tensor, TensorType
 
 class RiemannianMetric(Tensor):
@@ -37,3 +37,22 @@ class RiemannianMetric(Tensor):
         raise ValueError(
             f"Batch shape mismatch: basis implies {expected_batch_shape} but components have {actual_batch_shape}"
         )
+
+
+@dispatch
+def change_coordinates(metric: RiemannianMetric, new_basis: DualBasis) -> RiemannianMetric:
+  """
+  Transform a Riemannian metric (0,2 tensor) between dual bases.
+
+  If T_dual = get_basis_transform(metric.basis, new_basis), then
+  g' = T_dual^T · g · T_dual.
+  """
+  T_dual = get_basis_transform(metric.basis, new_basis)
+
+  @jet_decorator
+  def transform(g_vals):
+    return jnp.einsum("...ki,...kl,...lj->...ij", T_dual.value, g_vals, T_dual.value)
+
+  g_vals = metric.components.get_value_jet()
+  new_components = transform(g_vals)
+  return RiemannianMetric(basis=new_basis, components=new_components)
