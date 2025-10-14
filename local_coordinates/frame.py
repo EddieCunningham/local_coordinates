@@ -28,6 +28,14 @@ class Frame(AbstractBatchableObject):
   def batch_size(self) -> Union[None,int,Tuple[int]]:
     return self.basis.batch_size
 
+  def to_dual(self) -> 'DualFrame':
+    @jet_decorator
+    def to_dual_components(E_vals):
+      return jnp.linalg.inv(E_vals)
+    comps_val = self.components.get_value_jet()
+    dual_components = to_dual_components(comps_val)
+    return DualFrame(p=self.p, components=dual_components, basis=self.basis)
+
 @dispatch
 def change_coordinates(frame: Frame, new_basis: BasisVectors) -> Frame:
   """
@@ -47,3 +55,50 @@ def change_coordinates(frame: Frame, new_basis: BasisVectors) -> Frame:
   new_components = transform_components(comps_val)
 
   return Frame(p=frame.p, components=new_components, basis=new_basis)
+
+
+class DualFrame(AbstractBatchableObject):
+  """
+  A covector frame (dual basis). The covector components are written
+  in the standard Euclidean coordinates.
+  """
+  p: Float[Array, "N"]
+  components: Annotated[Jet, "N D"]
+  basis: BasisVectors
+
+  def __check_init__(self):
+    assert isinstance(self.components, Jet), "components must be a Jet"
+    if self.components.ndim != self.p.ndim + 1:
+      raise ValueError(f"Invalid number of dimensions: {self.components.ndim}")
+
+  @property
+  def batch_size(self) -> Union[None,int,Tuple[int]]:
+    return self.basis.batch_size
+
+  def to_primal(self) -> Frame:
+    @jet_decorator
+    def to_primal_components(theta_vals):
+      return jnp.linalg.inv(theta_vals)
+    comps_val = self.components.get_value_jet()
+    primal_components = to_primal_components(comps_val)
+    return Frame(p=self.p, components=primal_components, basis=self.basis)
+
+
+@dispatch
+def change_coordinates(frame: DualFrame, new_basis: BasisVectors) -> DualFrame:
+  """
+  Transform a covector frame from one basis to another.
+  """
+  # Transformation for covariant index uses T^{-1}
+  T = get_basis_transform(frame.basis, new_basis)
+  Tinv = jnp.linalg.inv(T.value)
+
+  @jet_decorator
+  def transform_components(components):
+    # Right-multiply by T^{-1} to preserve pairing D_new @ (T @ C_old) = D_old @ C_old
+    return jnp.einsum("...ij,...jk->...ik", components, Tinv)
+
+  comps_val = frame.components.get_value_jet()
+  new_components = transform_components(comps_val)
+
+  return DualFrame(p=frame.p, components=new_components, basis=new_basis)
