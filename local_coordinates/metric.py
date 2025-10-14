@@ -8,7 +8,7 @@ from jaxtyping import Array, Float, PRNGKeyArray
 from linsdex import AbstractBatchableObject
 from plum import dispatch
 from local_coordinates.jet import Jet, jet_decorator
-from local_coordinates.basis import BasisVectors
+from local_coordinates.basis import BasisVectors, DualBasis
 from local_coordinates.tensor import Tensor, TensorType
 
 class RiemannianMetric(Tensor):
@@ -16,10 +16,10 @@ class RiemannianMetric(Tensor):
   A Riemannian metric is a map from a tangent space to the real numbers.
   """
   tensor_type: TensorType = eqx.field(static=True)
-  basis: BasisVectors
+  basis: DualBasis
   components: Annotated[Jet, "D D"] # The components of the tensor written in the chosen basis
 
-  def __init__(self, basis: BasisVectors, components: Annotated[Jet, "D D"]):
+  def __init__(self, basis: DualBasis, components: Annotated[Jet, "D D"], **kwargs):
     super().__init__(tensor_type=TensorType(k=0, l=2), basis=basis, components=components)
 
   @property

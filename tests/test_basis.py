@@ -1,5 +1,5 @@
 import jax.numpy as jnp
-from local_coordinates.basis import BasisVectors, get_basis_transform, make_coordinate_basis, get_standard_basis, get_lie_bracket_components
+from local_coordinates.basis import BasisVectors, DualBasis, get_basis_transform, make_coordinate_basis, get_standard_basis, get_standard_dual_basis, get_lie_bracket_components
 from local_coordinates.jet import Jet, function_to_jet, jet_decorator
 import pytest
 import jax
@@ -260,6 +260,79 @@ def test_get_standard_basis():
   assert basis.components.hessian.shape == (2, 2, 2, 2)
   assert jnp.allclose(basis.components.gradient, 0.0)
   assert jnp.allclose(basis.components.hessian, 0.0)
+
+
+def test_dual_basis_standard():
+  p = jnp.array([1.0, 2.0])
+  dual = get_standard_dual_basis(p)
+  assert jnp.allclose(dual.p, p)
+  assert jnp.allclose(dual.components.value, jnp.eye(2))
+  assert dual.components.gradient.shape == (2, 2, 2)
+  assert dual.components.hessian.shape == (2, 2, 2, 2)
+  assert jnp.allclose(dual.components.gradient, 0.0)
+  assert jnp.allclose(dual.components.hessian, 0.0)
+
+
+def test_dual_basis_transform_matches_vector_inverse():
+  p = jnp.array([0., 0.])
+  B_from = jnp.array([[1.0, 0.5], [0.0, 1.0]])
+  B_to = jnp.array([[0.0, 1.0], [1.0, 0.0]])
+
+  vec_from = BasisVectors(p=p, components=Jet(value=B_from, gradient=None, hessian=None))
+  vec_to = BasisVectors(p=p, components=Jet(value=B_to, gradient=None, hessian=None))
+
+  # Dual components are inverses of vector basis matrices
+  theta_from = DualBasis(p=p, components=Jet(value=jnp.linalg.inv(B_from), gradient=None, hessian=None))
+  theta_to = DualBasis(p=p, components=Jet(value=jnp.linalg.inv(B_to), gradient=None, hessian=None))
+
+  T_vec = get_basis_transform(vec_from, vec_to).value
+  T_dual = get_basis_transform(theta_from, theta_to).value
+
+  assert jnp.allclose(T_dual, jnp.linalg.inv(T_vec))
+
+
+def test_dual_basis_transform_composition():
+  p = jnp.array([0., 0.])
+  B1 = jnp.array([[1.0, 0.5], [0.0, 1.0]])
+  B2 = jnp.array([[0.0, 1.0], [1.0, 0.0]])
+  B3 = jnp.array([[2.0, 0.0], [0.0, 0.5]])
+
+  theta1 = DualBasis(p=p, components=Jet(value=jnp.linalg.inv(B1), gradient=None, hessian=None))
+  theta2 = DualBasis(p=p, components=Jet(value=jnp.linalg.inv(B2), gradient=None, hessian=None))
+  theta3 = DualBasis(p=p, components=Jet(value=jnp.linalg.inv(B3), gradient=None, hessian=None))
+
+  T12 = get_basis_transform(theta1, theta2).value
+  T23 = get_basis_transform(theta2, theta3).value
+  T13 = get_basis_transform(theta1, theta3).value
+
+  # For dual transforms, composition order is T13 = T12 @ T23
+  assert jnp.allclose(T13, T12 @ T23)
+
+
+def test_dual_and_vector_transforms_pairing_identity():
+  p = jnp.array([0., 0.])
+  B_from = jnp.array([[1.0, 0.5], [0.0, 1.0]])
+  B_to = jnp.array([[0.0, 1.0], [1.0, 0.0]])
+
+  vec_from = BasisVectors(p=p, components=Jet(value=B_from, gradient=None, hessian=None))
+  vec_to = BasisVectors(p=p, components=Jet(value=B_to, gradient=None, hessian=None))
+
+  theta_from = DualBasis(p=p, components=Jet(value=jnp.linalg.inv(B_from), gradient=None, hessian=None))
+  theta_to = DualBasis(p=p, components=Jet(value=jnp.linalg.inv(B_to), gradient=None, hessian=None))
+
+  T_vec = get_basis_transform(vec_from, vec_to).value
+  T_dual = get_basis_transform(theta_from, theta_to).value
+
+  # Start with identity coordinates in the "from" bases
+  E_coords_from = jnp.eye(2)
+  Theta_coords_from = jnp.eye(2)
+
+  # Transform coordinates into the "to" bases
+  E_coords_to = T_vec @ E_coords_from
+  Theta_coords_to = Theta_coords_from @ T_dual
+
+  # Pairing θ(E) should remain identity in the target basis coordinates
+  assert jnp.allclose(Theta_coords_to @ E_coords_to, jnp.eye(2))
 
 
 def test_lie_bracket():

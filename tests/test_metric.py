@@ -1,7 +1,7 @@
 import jax.numpy as jnp
 import pytest
 from local_coordinates.metric import RiemannianMetric
-from local_coordinates.basis import BasisVectors
+from local_coordinates.basis import BasisVectors, DualBasis
 from local_coordinates.jet import Jet
 
 def test_riemannian_metric_creation():
@@ -10,7 +10,7 @@ def test_riemannian_metric_creation():
   """
   p = jnp.array([1., 2.])
   basis_components = Jet(value=jnp.eye(2), gradient=None, hessian=None)
-  basis = BasisVectors(p=p, components=basis_components)
+  basis = DualBasis(p=p, components=basis_components)
 
   metric_components_jet = Jet(value=jnp.eye(2), gradient=None, hessian=None)
   metric = RiemannianMetric(basis=basis, components=metric_components_jet)
@@ -25,7 +25,7 @@ def test_metric_creation_fails_with_non_jet_components():
   """
   p = jnp.array([1., 2.])
   basis_components = Jet(value=jnp.eye(2), gradient=None, hessian=None)
-  basis = BasisVectors(p=p, components=basis_components)
+  basis = DualBasis(p=p, components=basis_components)
 
   metric_components = jnp.eye(2) # Not a Jet
 
@@ -38,7 +38,7 @@ def test_metric_creation_fails_with_wrong_ndim():
   """
   p = jnp.array([1., 2.])
   basis_components = Jet(value=jnp.eye(2), gradient=None, hessian=None)
-  basis = BasisVectors(p=p, components=basis_components)
+  basis = DualBasis(p=p, components=basis_components)
 
   metric_components_jet = Jet(value=jnp.ones((2, 2, 2)), gradient=None, hessian=None)
 
@@ -64,7 +64,7 @@ def test_metric_batching():
   """
   p_batch = jnp.array([[1., 2.], [3., 4.], [5., 6.]])
   basis_components_jet = Jet(value=jnp.stack([jnp.eye(2)] * 3), gradient=None, hessian=None)
-  basis = BasisVectors(p=p_batch, components=basis_components_jet)
+  basis = DualBasis(p=p_batch, components=basis_components_jet)
 
   metric_components_jet = Jet(value=jnp.stack([jnp.eye(2)] * 3), gradient=None, hessian=None)
   metric = RiemannianMetric(basis=basis, components=metric_components_jet)

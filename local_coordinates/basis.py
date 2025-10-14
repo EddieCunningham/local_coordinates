@@ -33,6 +33,32 @@ class BasisVectors(AbstractBatchableObject):
     else:
       raise ValueError(f"Invalid number of dimensions: {self.p.ndim}")
 
+
+class DualBasis(AbstractBatchableObject):
+  """
+  A basis of covectors (dual basis). Components are written in standard
+  Euclidean coordinates, arranged so that θ @ E = I where E are the
+  associated basis vectors in the same basis.
+  """
+  p: Float[Array, "N"]
+  components: Annotated[Jet, "N D"]
+
+  def __check_init__(self):
+    assert isinstance(self.components, Jet), "components must be a Jet"
+    if self.components.ndim != self.p.ndim + 1:
+      raise ValueError(f"Invalid number of dimensions: {self.components.ndim}")
+
+  @property
+  def batch_size(self) -> Union[None,int,Tuple[int]]:
+    if self.p.ndim > 2:
+      return self.p.shape[:-1]
+    elif self.p.ndim == 2:
+      return self.p.shape[0]
+    elif self.p.ndim == 1:
+      return None
+    else:
+      raise ValueError(f"Invalid number of dimensions: {self.p.ndim}")
+
 def get_lie_bracket_components(basis: BasisVectors) -> Jet:
   """
   Get the components of the Lie bracket of the basis vectors.  Returns
@@ -59,6 +85,7 @@ def get_lie_bracket_components(basis: BasisVectors) -> Jet:
   out: Jet = change_basis(components_euclidean.get_value_jet(), T_jet.get_value_jet())
   return out
 
+@dispatch
 def get_basis_transform(from_basis: BasisVectors, to_basis: BasisVectors) -> Jet:
   """
   Get the transformation matrix from one set of basis vectors to another.
@@ -75,11 +102,35 @@ def get_basis_transform(from_basis: BasisVectors, to_basis: BasisVectors) -> Jet
   )
   return new_components
 
+@dispatch
+def get_basis_transform(from_basis: DualBasis, to_basis: DualBasis) -> Jet:
+  """
+  Get the transformation matrix for dual bases (covectors).
+
+  If T_vec = inv(E_to) @ E_from is the vector transform, then the dual
+  transform satisfies T_dual = T_vec^{-1} = inv(E_from) @ E_to. In terms of
+  dual components Θ = inv(E), this is Θ_from @ inv(Θ_to).
+  """
+  @jet_decorator
+  def get_components(theta_from, theta_to) -> Array:
+    return theta_from @ jnp.linalg.inv(theta_to)
+
+  from_components_val = from_basis.components.get_value_jet()
+  to_components_val = to_basis.components.get_value_jet()
+  new_components = get_components(from_components_val, to_components_val)
+  return new_components
+
 def get_standard_basis(p: Float[Array, "N"]) -> BasisVectors:
   """
   Get the standard basis at a given point.
   """
   return BasisVectors(p=p, components=Jet(value=jnp.eye(p.shape[0]), gradient=jnp.zeros((p.shape[0], p.shape[0], p.shape[0])), hessian=jnp.zeros((p.shape[0], p.shape[0], p.shape[0], p.shape[0]))))
+
+def get_standard_dual_basis(p: Float[Array, "N"]) -> DualBasis:
+  """
+  Get the standard dual basis at a given point.
+  """
+  return DualBasis(p=p, components=Jet(value=jnp.eye(p.shape[0]), gradient=jnp.zeros((p.shape[0], p.shape[0], p.shape[0])), hessian=jnp.zeros((p.shape[0], p.shape[0], p.shape[0], p.shape[0]))))
 
 def make_coordinate_basis(basis: BasisVectors) -> BasisVectors:
   """
