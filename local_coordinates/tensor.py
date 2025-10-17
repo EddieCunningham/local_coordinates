@@ -116,8 +116,11 @@ def change_coordinates(tensor: Tensor, new_basis: BasisVectors) -> Tensor:
   """
   Transform a tensor from one basis to another.
   """
-  T = get_basis_transform(tensor.basis, new_basis)
-  Tinv = jnp.linalg.inv(T.value)
+  T: Jet = get_basis_transform(tensor.basis, new_basis)
+  Tinv: Jet = jet_decorator(jnp.linalg.inv)(T.get_value_jet())
+
+  T_value_jet: Jet = T.get_value_jet()
+  Tinv_value_jet: Jet = Tinv.get_value_jet()
 
   k = tensor.tensor_type.k
   l = tensor.tensor_type.l
@@ -146,27 +149,25 @@ def change_coordinates(tensor: Tensor, new_basis: BasisVectors) -> Tensor:
   k_output_indices = output_indices[:k]
   for i in range(k):
     transforms_str_parts.append(f"{k_output_indices[i]}{k_input_indices[i]}")
-    transforms.append(Tinv)
+    transforms.append(Tinv_value_jet)
 
   # Contravariant part (l) transforms with T
   l_input_indices = input_indices[k:k+l]
   l_output_indices = output_indices[k:k+l]
   for i in range(l):
     transforms_str_parts.append(f"{l_output_indices[i]}{l_input_indices[i]}")
-    transforms.append(T.value)
+    transforms.append(T_value_jet)
 
   output_tensor_str = f"...{output_indices}"
 
   einsum_str = f"{input_tensor_str},{','.join(transforms_str_parts)}->{output_tensor_str}"
 
-  warnings.warn(f"change coordinates for tensor is incorrect!")
-
   @jet_decorator
-  def transform_components(components) -> Array:
-    return jnp.einsum(einsum_str, components, *transforms)
+  def transform_components(components, transforms_vals) -> Array:
+    return jnp.einsum(einsum_str, components, *transforms_vals)
 
   t_comps_val = tensor.components.get_value_jet()
-  new_components = transform_components(t_comps_val)
+  new_components: Jet = transform_components(t_comps_val, transforms)
 
   tensor_class = type(tensor) # e.g. RiemannianMetric
   return tensor_class(
