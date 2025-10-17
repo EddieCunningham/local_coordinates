@@ -1,6 +1,6 @@
 import jax.numpy as jnp
-from local_coordinates.basis import BasisVectors, DualBasis, get_basis_transform, make_coordinate_basis, get_standard_basis, get_standard_dual_basis, get_lie_bracket_components
-from local_coordinates.jet import Jet, function_to_jet, jet_decorator
+from local_coordinates.basis import BasisVectors, DualBasis, change_basis, get_basis_transform, make_coordinate_basis, get_standard_basis, get_standard_dual_basis
+from local_coordinates.jet import Jet, function_to_jet, jet_decorator, get_identity_jet
 import pytest
 import jax
 import jax.random as random
@@ -8,7 +8,7 @@ import jax.random as random
 def test_basis_vectors_creation():
   p = jnp.array([1., 2.])
   basis_vectors = jnp.eye(2)
-  components_jet = Jet(value=basis_vectors, gradient=None, hessian=None)
+  components_jet = Jet(value=basis_vectors, gradient=None, hessian=None, dim=2)
   cs = BasisVectors(p=p, components=components_jet)
   assert jnp.array_equal(cs.p, p)
   assert jnp.array_equal(cs.components.value, basis_vectors)
@@ -17,7 +17,7 @@ def test_get_coordinate_transform_simple():
   # cs1 is standard basis
   p1 = jnp.array([0., 0.])
   b1 = jnp.eye(2)
-  components1 = Jet(value=b1, gradient=None, hessian=None)
+  components1 = Jet(value=b1, gradient=None, hessian=None, dim=2)
   cs1 = BasisVectors(p=p1, components=components1)
 
   # cs2 has swapped basis vectors
@@ -26,7 +26,7 @@ def test_get_coordinate_transform_simple():
     [0., 1.],
     [1., 0.]
   ])
-  components2 = Jet(value=b2, gradient=None, hessian=None)
+  components2 = Jet(value=b2, gradient=None, hessian=None, dim=2)
   cs2 = BasisVectors(p=p2, components=components2)
 
   # Transform from cs1 to cs2
@@ -43,7 +43,7 @@ def test_get_coordinate_transform_rotated():
   # cs1 is standard basis
   p1 = jnp.array([0., 0.])
   b1 = jnp.eye(2)
-  components1 = Jet(value=b1, gradient=None, hessian=None)
+  components1 = Jet(value=b1, gradient=None, hessian=None, dim=2)
   cs1 = BasisVectors(p=p1, components=components1)
 
   # cs2 is rotated by 45 degrees
@@ -53,7 +53,7 @@ def test_get_coordinate_transform_rotated():
     [jnp.cos(angle), -jnp.sin(angle)],
     [jnp.sin(angle), jnp.cos(angle)]
   ])
-  components2 = Jet(value=b2, gradient=None, hessian=None)
+  components2 = Jet(value=b2, gradient=None, hessian=None, dim=2)
   cs2 = BasisVectors(p=p2, components=components2)
 
   # Transform from cs1 to cs2
@@ -79,7 +79,7 @@ def test_basis_vectors_batching():
   p_batch = jnp.array([[1., 2.], [3., 4.], [5., 6.]])
   # Batch of 3 corresponding identity basis vectors
   b_batch = jnp.stack([jnp.eye(2)] * 3)
-  components_jet = Jet(value=b_batch, gradient=None, hessian=None)
+  components_jet = Jet(value=b_batch, gradient=None, hessian=None, dim=2)
   cs = BasisVectors(p=p_batch, components=components_jet)
 
   assert cs.batch_size == 3
@@ -90,7 +90,7 @@ def test_get_coordinate_transform_skewed():
   # cs1 is standard basis
   p1 = jnp.array([0., 0.])
   b1 = jnp.eye(2)
-  components1 = Jet(value=b1, gradient=None, hessian=None)
+  components1 = Jet(value=b1, gradient=None, hessian=None, dim=2)
   cs1 = BasisVectors(p=p1, components=components1)
 
   # cs2 has skewed (non-orthogonal) basis vectors
@@ -99,7 +99,7 @@ def test_get_coordinate_transform_skewed():
     [1.0, 0.5],  # Skewed basis
     [0.0, 1.0]
   ])
-  components2 = Jet(value=b2, gradient=None, hessian=None)
+  components2 = Jet(value=b2, gradient=None, hessian=None, dim=2)
   cs2 = BasisVectors(p=p2, components=components2)
 
   # Transform from cs1 to cs2
@@ -278,12 +278,12 @@ def test_dual_basis_transform_matches_vector_inverse():
   B_from = jnp.array([[1.0, 0.5], [0.0, 1.0]])
   B_to = jnp.array([[0.0, 1.0], [1.0, 0.0]])
 
-  vec_from = BasisVectors(p=p, components=Jet(value=B_from, gradient=None, hessian=None))
-  vec_to = BasisVectors(p=p, components=Jet(value=B_to, gradient=None, hessian=None))
+  vec_from = BasisVectors(p=p, components=Jet(value=B_from, gradient=None, hessian=None, dim=2))
+  vec_to = BasisVectors(p=p, components=Jet(value=B_to, gradient=None, hessian=None, dim=2))
 
   # Dual components are inverses of vector basis matrices
-  theta_from = DualBasis(p=p, components=Jet(value=jnp.linalg.inv(B_from), gradient=None, hessian=None))
-  theta_to = DualBasis(p=p, components=Jet(value=jnp.linalg.inv(B_to), gradient=None, hessian=None))
+  theta_from = DualBasis(p=p, components=Jet(value=jnp.linalg.inv(B_from), gradient=None, hessian=None, dim=2))
+  theta_to = DualBasis(p=p, components=Jet(value=jnp.linalg.inv(B_to), gradient=None, hessian=None, dim=2))
 
   T_vec = get_basis_transform(vec_from, vec_to).value
   T_dual = get_basis_transform(theta_from, theta_to).value
@@ -297,9 +297,9 @@ def test_dual_basis_transform_composition():
   B2 = jnp.array([[0.0, 1.0], [1.0, 0.0]])
   B3 = jnp.array([[2.0, 0.0], [0.0, 0.5]])
 
-  theta1 = DualBasis(p=p, components=Jet(value=jnp.linalg.inv(B1), gradient=None, hessian=None))
-  theta2 = DualBasis(p=p, components=Jet(value=jnp.linalg.inv(B2), gradient=None, hessian=None))
-  theta3 = DualBasis(p=p, components=Jet(value=jnp.linalg.inv(B3), gradient=None, hessian=None))
+  theta1 = DualBasis(p=p, components=Jet(value=jnp.linalg.inv(B1), gradient=None, hessian=None, dim=2))
+  theta2 = DualBasis(p=p, components=Jet(value=jnp.linalg.inv(B2), gradient=None, hessian=None, dim=2))
+  theta3 = DualBasis(p=p, components=Jet(value=jnp.linalg.inv(B3), gradient=None, hessian=None, dim=2))
 
   T12 = get_basis_transform(theta1, theta2).value
   T23 = get_basis_transform(theta2, theta3).value
@@ -314,11 +314,11 @@ def test_dual_and_vector_transforms_pairing_identity():
   B_from = jnp.array([[1.0, 0.5], [0.0, 1.0]])
   B_to = jnp.array([[0.0, 1.0], [1.0, 0.0]])
 
-  vec_from = BasisVectors(p=p, components=Jet(value=B_from, gradient=None, hessian=None))
-  vec_to = BasisVectors(p=p, components=Jet(value=B_to, gradient=None, hessian=None))
+  vec_from = BasisVectors(p=p, components=Jet(value=B_from, gradient=None, hessian=None, dim=2))
+  vec_to = BasisVectors(p=p, components=Jet(value=B_to, gradient=None, hessian=None, dim=2))
 
-  theta_from = DualBasis(p=p, components=Jet(value=jnp.linalg.inv(B_from), gradient=None, hessian=None))
-  theta_to = DualBasis(p=p, components=Jet(value=jnp.linalg.inv(B_to), gradient=None, hessian=None))
+  theta_from = DualBasis(p=p, components=Jet(value=jnp.linalg.inv(B_from), gradient=None, hessian=None, dim=2))
+  theta_to = DualBasis(p=p, components=Jet(value=jnp.linalg.inv(B_to), gradient=None, hessian=None, dim=2))
 
   T_vec = get_basis_transform(vec_from, vec_to).value
   T_dual = get_basis_transform(theta_from, theta_to).value
@@ -338,7 +338,7 @@ def test_dual_and_vector_transforms_pairing_identity():
 def test_basis_dual_roundtrip():
   p = jnp.array([0., 0.])
   B = jnp.array([[1.0, 0.5], [0.0, 1.0]])
-  vec = BasisVectors(p=p, components=Jet(value=B, gradient=None, hessian=None))
+  vec = BasisVectors(p=p, components=Jet(value=B, gradient=None, hessian=None, dim=2))
   dual = vec.to_dual()
   vec_back = dual.to_primal()
   assert jnp.allclose(dual.components.value @ vec.components.value, jnp.eye(2))
@@ -349,8 +349,8 @@ def test_dual_primal_pairing_invariance_under_transform():
   p = jnp.array([0., 0.])
   B1 = jnp.array([[1.0, 0.5], [0.0, 1.0]])
   B2 = jnp.array([[0.0, 1.0], [1.0, 0.0]])
-  vec1 = BasisVectors(p=p, components=Jet(value=B1, gradient=None, hessian=None))
-  vec2 = BasisVectors(p=p, components=Jet(value=B2, gradient=None, hessian=None))
+  vec1 = BasisVectors(p=p, components=Jet(value=B1, gradient=None, hessian=None, dim=2))
+  vec2 = BasisVectors(p=p, components=Jet(value=B2, gradient=None, hessian=None, dim=2))
   dual1 = vec1.to_dual()
   dual2 = vec2.to_dual()
 
@@ -363,131 +363,3 @@ def test_dual_primal_pairing_invariance_under_transform():
   E2 = T_vec @ E
   Theta2 = Theta @ T_dual
   assert jnp.allclose(Theta2 @ E2, jnp.eye(2))
-
-
-def test_lie_bracket():
-  # Construct a coordinate basis
-
-  def nonlin(x):
-    return jnp.log1p(jnp.abs(x))*jnp.sign(x)
-
-  key = random.key(0)
-  k1, k2 = random.split(key)
-  mat1 = random.normal(k1, (2, 2))
-  mat2 = random.normal(k2, (2, 2))
-  b1 = random.normal(k1, (2,))
-  b2 = random.normal(k2, (2,))
-
-  def inv_chart(x):
-    h = nonlin(mat1@x + b1)
-    return nonlin(mat2@h + b2)
-
-  # The point in the coordinate space to evaluate derivatives
-  x0 = jnp.array([0.5, 0.5])
-
-  # Create Jet objects for each basis using function_to_jet
-  inv_coord_vector_jet = function_to_jet(inv_chart, x0) # dz/dx
-
-  @jet_decorator
-  def invert_basis(coord_grads):
-    return jnp.linalg.inv(coord_grads)
-
-  coord_vector_jet = invert_basis(inv_coord_vector_jet.get_gradient_jet()) # dx/dz
-
-  # Create BasisVectors objects
-  p = jnp.array([0., 0.]) # this is arbitrary for this test
-  basis = BasisVectors(p=p, components=coord_vector_jet)
-
-  @jet_decorator
-  def lie_bracket_components(basis_vals, basis_grads):
-    term1 = jnp.einsum("ai,kja->kij", basis_vals, basis_grads)
-    term2 = jnp.einsum("aj,kia->kij", basis_vals, basis_grads)
-    return term1 - term2
-
-  basis_vals = basis.components.get_value_jet()
-  basis_grads = basis.components.get_gradient_jet()
-  lie_bracket_components = lie_bracket_components(basis_vals, basis_grads)
-
-  assert jnp.allclose(lie_bracket_components.value, 0.0)
-
-def test_get_lie_bracket_components_random():
-
-  # Create BasisVectors object
-  p = jnp.array([0., 0.]) # arbitrary for this test
-  key = random.key(0)
-  vals = random.normal(key, (2, 2))
-  grads = random.normal(key, (2, 2, 2))
-  hessians = random.normal(key, (2, 2, 2, 2))
-
-  basis = BasisVectors(p=p, components=Jet(value=vals, gradient=grads, hessian=hessians))
-
-  # Compute Lie bracket components via library function and check they vanish
-  c_jet = get_lie_bracket_components(basis)
-
-
-def test_get_lie_bracket_components():
-  # Construct a coordinate basis and verify the Lie bracket components vanish
-
-  def nonlin(x):
-    return jnp.log1p(jnp.abs(x))*jnp.sign(x)
-
-  key = random.key(0)
-  k1, k2 = random.split(key)
-  mat1 = random.normal(k1, (2, 2))
-  mat2 = random.normal(k2, (2, 2))
-  b1 = random.normal(k1, (2,))
-  b2 = random.normal(k2, (2,))
-
-  def inv_chart(x):
-    h = nonlin(mat1@x + b1)
-    return nonlin(mat2@h + b2)
-
-  # The point in the coordinate space to evaluate derivatives
-  x0 = jnp.array([0.5, 0.5])
-
-  # Create Jet objects for each basis using function_to_jet
-  inv_coord_vector_jet = function_to_jet(inv_chart, x0) # dz/dx
-
-  @jet_decorator
-  def invert_basis(coord_grads):
-    return jnp.linalg.inv(coord_grads)
-
-  coord_vector_jet = invert_basis(inv_coord_vector_jet.get_gradient_jet()) # dx/dz
-
-  # Create BasisVectors object
-  p = jnp.array([0., 0.]) # arbitrary for this test
-  basis = BasisVectors(p=p, components=coord_vector_jet)
-
-  # Compute Lie bracket components via library function and check they vanish
-  c_jet = get_lie_bracket_components(basis)
-  assert jnp.allclose(c_jet.value, 0.0)
-
-
-def test_get_lie_bracket_components_constant_frame_zero():
-  # For a constant frame E (no spatial variation), the Lie bracket vanishes
-  p = jnp.array([0.0, 0.0])
-  A = jnp.array([[2.0, -1.0],
-                 [1.5,  3.0]])
-  dA = jnp.zeros((2, 2, 2))
-  basis = BasisVectors(p=p, components=Jet(value=A, gradient=dA, hessian=None))
-  c_jet = get_lie_bracket_components(basis)
-  assert jnp.allclose(c_jet.value, 0.0)
-
-
-def test_get_lie_bracket_components_simple_noncommuting_frame():
-  # E1 = (1, 0), E2 = (x, 1) -> [E1,E2] = (1,0) = E1
-  p = jnp.array([0.3, -0.2])
-  E = jnp.array([[1.0, p[0]], # entry (0, 1) is p[0]
-                 [0.0, 1.0]])
-  dE = jnp.zeros((2, 2, 2))
-  dE = dE.at[0, 1, 0].set(1.0)  # ∂_x E2^x = 1
-
-  basis = BasisVectors(p=p, components=Jet(value=E, gradient=dE, hessian=None))
-  out = get_lie_bracket_components(basis)
-  c = out.value  # shape (k, i, j)
-
-  expected = jnp.zeros_like(c)
-  # c^0_{01} = +1, c^0_{10} = -1 (where k=0 corresponds to the first basis vector E_0)
-  expected = expected.at[0, 0, 1].set(1.0)
-  expected = expected.at[0, 1, 0].set(-1.0)
-  assert jnp.allclose(c, expected)

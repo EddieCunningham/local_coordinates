@@ -6,7 +6,8 @@ from jax import random
 import equinox as eqx
 from jaxtyping import Array, Float, PRNGKeyArray
 from linsdex import AbstractBatchableObject
-from local_coordinates.basis import BasisVectors, DualBasis, get_basis_transform, get_standard_basis, get_lie_bracket_components
+from local_coordinates.basis import BasisVectors, DualBasis, get_basis_transform, get_standard_basis
+from local_coordinates.frame import get_lie_bracket_components
 from plum import dispatch
 from local_coordinates.tensor import Tensor, change_coordinates
 from local_coordinates.jet import Jet
@@ -82,27 +83,30 @@ def get_levi_civita_connection(metric: RiemannianMetric) -> Connection:
   @jet_decorator
   def get_christoffel_symbols(c_kij_val, g_ij_val, g_ijk_grad) -> Array:
     """
-    Gamma_{kij} = 1/2 (g_{jk,i} + g_{ij,j} - g_{ij,k} + c_{kij} - c_{jik} - c_{ijk})
+    Gamma_{kij} = 1/2 (g_{jk,i} + g_{ik,j} - g_{ij,k} + c_{kij} - c_{jik} - c_{ijk})
     """
     ginv = jnp.linalg.inv(g_ij_val)              # g^{kl}
 
-    # Metric derivative terms: T1+T2−T3 with A[i,j,k] = g_{ij,k}
-    T1 = jnp.einsum("kl,jli->kij", ginv, g_ijk_grad)   # g^{kl} ∂_i g_{jl}
-    T2 = jnp.einsum("kl,ilj->kij", ginv, g_ijk_grad)   # g^{kl} ∂_j g_{il}
-    T3 = jnp.einsum("kl,ijl->kij", ginv, g_ijk_grad)   # g^{kl} ∂_l g_{ij}
+    c_kij_lower = jnp.einsum("mij,mk->kij", c_kij_val, g_ij_val)
 
-    # Bracket terms: +C^k_{ij} − g^{kl} g_{jm} C^m_{il} − g^{kl} g_{im} C^m_{jl}
-    B1 = c_kij_val
-    B2 = jnp.einsum("kl,jm,mil->kij", ginv, g_ij_val, c_kij_val)  # − g^{kl} g_{jm} c_kij_val^m_{il}
-    B3 = jnp.einsum("kl,im,mjl->kij", ginv, g_ij_val, c_kij_val)  # − g^{kl} g_{im} C^m_{jl}
+    t1 = jnp.einsum("ijk->jki", g_ijk_grad)
+    t2 = jnp.einsum("ijk->ikj", g_ijk_grad)
+    t3 = jnp.einsum("ijk->ijk", g_ijk_grad)
+    t4 = jnp.einsum("kij->kij", c_kij_lower)
+    t5 = jnp.einsum("kij->jik", c_kij_lower)
+    t6 = jnp.einsum("kij->ijk", c_kij_lower)
 
-    gamma_upper = 0.5 * (T1 + T2 - T3 + B1 - B2 - B3)
+    gamma_lower = 0.5 * (t1 + t2 - t3 + t4 - t5 - t6)
+
+    gamma_upper = jnp.einsum("km,mij->kij", ginv, gamma_lower)
+
     return gamma_upper
 
   c_kij_val = c_kij.get_value_jet()
   g_ij_val = metric.components.get_value_jet()
   g_ijk_grad = g_ijk.get_value_jet()
   christoffel_symbols: Jet = get_christoffel_symbols(c_kij_val, g_ij_val, g_ijk_grad)
+  import pdb; pdb.set_trace()
   return Connection(basis=basis, christoffel_symbols=christoffel_symbols)
 
 

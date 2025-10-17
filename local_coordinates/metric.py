@@ -50,9 +50,10 @@ def change_coordinates(metric: RiemannianMetric, new_basis: DualBasis) -> Rieman
   T_dual = get_basis_transform(metric.basis, new_basis)
 
   @jet_decorator
-  def transform(g_vals):
-    return jnp.einsum("...ki,...kl,...lj->...ij", T_dual.value, g_vals, T_dual.value)
+  def transform(g_vals, T_val):
+    return jnp.einsum("...ki,...kl,...lj->...ij", T_val, g_vals, T_val)
 
   g_vals = metric.components.get_value_jet()
-  new_components = transform(g_vals)
+  T_val = T_dual.get_value_jet()
+  new_components = transform(g_vals, T_val)
   return RiemannianMetric(basis=new_basis, components=new_components)

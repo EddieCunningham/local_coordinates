@@ -78,7 +78,8 @@ def test_jet_call_method():
     jet_0th = Jet(
         value=jnp.array(10.0),
         gradient=None,
-        hessian=None
+        hessian=None,
+        dim=2
     )
     result_0th = jet_0th(dx)
     assert jnp.allclose(result_0th, 10.0)
@@ -322,12 +323,13 @@ def test_jet_decorator_with_none_gradient():
     def g(x):
         return x**2
 
-    jet = Jet(value=jnp.array(3.0), gradient=None, hessian=None)
+    jet = Jet(value=jnp.array(3.0), gradient=None, hessian=None, dim=1)
     out = g(jet)
 
     assert jnp.allclose(out.value, jnp.array(9.0))
-    assert out.gradient is None
-    assert out.hessian is None
+    # With dim specified, zeros are propagated
+    assert jnp.allclose(out.gradient, jnp.array([0.0]))
+    assert jnp.allclose(out.hessian, jnp.array([[0.0]]))
 
 
 def test_jet_decorator_with_none_hessian():
@@ -367,19 +369,20 @@ def test_jet_decorator_mixed_none_attributes():
         hessian=jnp.array([[0.0]]),
     )
 
-    # Second jet has no gradient or hessian
+    # Second jet has no gradient or hessian (zeros with dim)
     jet_y = Jet(
         value=jnp.array(3.0),
         gradient=None,
         hessian=None,
+        dim=1,
     )
 
     out = g(jet_x, jet_y)
 
-    # Should compute value but not derivatives since one jet is missing them
+    # With zeros provided for missing derivatives, gradients propagate accordingly
     assert jnp.allclose(out.value, jnp.array(6.0))
-    assert out.gradient is None
-    assert out.hessian is None
+    assert jnp.allclose(out.gradient, jnp.array([3.0]))
+    assert jnp.allclose(out.hessian, jnp.array([[0.0]]))
 
 
 def test_jet_decorator_mixed_partial_derivatives():
@@ -958,13 +961,13 @@ def test_jet_decorator_used_group_without_gradient():
         return y + 1.0  # depends only on y
 
     x = Jet(value=jnp.array(2.0), gradient=jnp.array([1.0]), hessian=jnp.array([[0.0]]))
-    y = Jet(value=jnp.array(3.0), gradient=None, hessian=None)
+    y = Jet(value=jnp.array(3.0), gradient=None, hessian=None, dim=1)
 
     out = g(x, y)
 
     assert jnp.allclose(out.value, 4.0)
-    assert out.gradient is None
-    assert out.hessian is None
+    assert jnp.allclose(out.gradient, jnp.array([0.0]))
+    assert jnp.allclose(out.hessian, jnp.array([[0.0]]))
 
 
 def test_jet_decorator_handles_jet_in_container():

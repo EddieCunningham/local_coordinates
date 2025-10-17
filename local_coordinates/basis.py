@@ -75,31 +75,7 @@ class DualBasis(AbstractBatchableObject):
     primal_components = to_primal_components(comps_val)
     return BasisVectors(p=self.p, components=primal_components)
 
-def get_lie_bracket_components(basis: BasisVectors) -> Jet:
-  """
-  Get the components of the Lie bracket of the basis vectors.  Returns
-  c_{ij}^k where [E_i, E_j] = c_{ij}^k E_k.
-  """
-  @jet_decorator
-  def get_components(basis_vals: Array, basis_grads: Array) -> Array:
-    term1 = jnp.einsum("ai,kja->kij", basis_vals, basis_grads)
-    term2 = jnp.einsum("aj,kia->kij", basis_vals, basis_grads)
-    return term1 - term2
 
-  basis_vals = basis.components.get_value_jet()
-  basis_grads = basis.components.get_gradient_jet()
-  components_euclidean: Jet = get_components(basis_vals, basis_grads)
-
-  # Convert to components in the same basis that we started with
-  standard_basis = get_standard_basis(basis.p)
-  T_jet: Jet = get_basis_transform(standard_basis, basis)
-
-  @jet_decorator
-  def change_basis(components_euclidean_vals: Array, T_val: Array) -> Array:
-    return jnp.einsum("ka,aij->kij", T_val, components_euclidean_vals)
-
-  out: Jet = change_basis(components_euclidean.get_value_jet(), T_jet.get_value_jet())
-  return out
 
 @dispatch
 def get_basis_transform(from_basis: BasisVectors, to_basis: BasisVectors) -> Jet:

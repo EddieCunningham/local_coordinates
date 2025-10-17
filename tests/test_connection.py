@@ -11,7 +11,7 @@ def test_connection_basic_construction():
   basis = get_standard_basis(p)
 
   Gamma = jnp.zeros((2, 2, 2))
-  Gamma_jet = Jet(value=Gamma, gradient=None, hessian=None)
+  Gamma_jet = Jet(value=Gamma, gradient=None, hessian=None, dim=2)
 
   conn = Connection(basis=basis, christoffel_symbols=Gamma_jet)
 
@@ -178,11 +178,11 @@ def test_covariant_derivative_zero_connection_matches_directional_derivative():
   basis = get_standard_basis(p)
 
   Gamma = jnp.zeros((2, 2, 2))
-  conn = Connection(basis=basis, christoffel_symbols=Jet(value=Gamma, gradient=None, hessian=None))
+  conn = Connection(basis=basis, christoffel_symbols=Jet(value=Gamma, gradient=None, hessian=None, dim=2))
 
   # X components (vector)
   X_val = jnp.array([1.2, -0.7])
-  X = Jet(value=X_val, gradient=None, hessian=None)
+  X = Jet(value=X_val, gradient=None, hessian=None, dim=2)
   vec = TensorType(1, 0)
   X_tensor = Tensor(tensor_type=vec, basis=basis, components=X)
 
@@ -193,7 +193,7 @@ def test_covariant_derivative_zero_connection_matches_directional_derivative():
   Y = Jet(value=Y_val, gradient=Y_grad, hessian=None)
   Y_tensor = Tensor(tensor_type=vec, basis=basis, components=Y)
 
-  out = Connection(basis=basis, christoffel_symbols=Jet(value=Gamma, gradient=None, hessian=None)).covariant_derivative(X_tensor, Y_tensor)
+  out = Connection(basis=basis, christoffel_symbols=Jet(value=Gamma, gradient=None, hessian=None, dim=2)).covariant_derivative(X_tensor, Y_tensor)
   expected = jnp.einsum("i,ki->k", X_val, Y_grad)
   assert jnp.allclose(out.components.value, expected)
 
@@ -206,18 +206,18 @@ def test_covariant_derivative_with_connection_matches_formula():
   Gamma = jnp.zeros((2, 2, 2))
   Gamma = Gamma.at[0, 0, 0].set(2.0)  # Γ^x_{xx} = 2
   Gamma = Gamma.at[1, 0, 1].set(-1.0) # Γ^y_{x y} = -1
-  conn = Connection(basis=basis, christoffel_symbols=Jet(value=Gamma, gradient=None, hessian=None))
+  conn = Connection(basis=basis, christoffel_symbols=Jet(value=Gamma, gradient=None, hessian=None, dim=2))
 
   X_val = jnp.array([0.3, -1.1])
   vec = TensorType(1, 0)
-  X_tensor = Tensor(tensor_type=vec, basis=basis, components=Jet(value=X_val, gradient=None, hessian=None))
+  X_tensor = Tensor(tensor_type=vec, basis=basis, components=Jet(value=X_val, gradient=None, hessian=None, dim=2))
 
   Y_val = jnp.array([1.4, 0.6])
   Y_grad = jnp.array([[0.2, 0.1],
                       [0.0, -0.4]])
   Y_tensor = Tensor(tensor_type=vec, basis=basis, components=Jet(value=Y_val, gradient=Y_grad, hessian=None))
 
-  out = Connection(basis=basis, christoffel_symbols=Jet(value=Gamma, gradient=None, hessian=None)).covariant_derivative(X_tensor, Y_tensor)
+  out = Connection(basis=basis, christoffel_symbols=Jet(value=Gamma, gradient=None, hessian=None, dim=2)).covariant_derivative(X_tensor, Y_tensor)
   term1 = jnp.einsum("i,ki->k", X_val, Y_grad)
   term2 = jnp.einsum("kij,i,j->k", Gamma, X_val, Y_val)
   expected = term1 + term2
@@ -249,10 +249,10 @@ def test_covariant_derivative_polar_plane_lc_connection():
   Y_grad = jnp.array([[0.3, -0.2],
                       [0.4,  0.1]])
   vec = TensorType(1, 0)
-  X_tensor = Tensor(tensor_type=vec, basis=basis, components=Jet(value=X_val, gradient=None, hessian=None))
+  X_tensor = Tensor(tensor_type=vec, basis=basis, components=Jet(value=X_val, gradient=None, hessian=None, dim=2))
   Y_tensor = Tensor(tensor_type=vec, basis=basis, components=Jet(value=Y_val, gradient=Y_grad, hessian=None))
 
-  out = Connection(basis=basis, christoffel_symbols=Jet(value=Gamma, gradient=None, hessian=None)).covariant_derivative(X_tensor, Y_tensor)
+  out = Connection(basis=basis, christoffel_symbols=Jet(value=Gamma, gradient=None, hessian=None, dim=2)).covariant_derivative(X_tensor, Y_tensor)
   expected = jnp.einsum("i,ki->k", X_val, Y_grad) + jnp.einsum("kij,i,j->k", Gamma, X_val, Y_val)
   assert jnp.allclose(out.components.value, expected)
 
@@ -284,10 +284,10 @@ def test_covariant_derivative_hyperbolic_half_plane_ground_truth():
   Y_grad = jnp.array([[0.2, 0.0],
                       [0.1, -0.15]])
   vec = TensorType(1, 0)
-  X_tensor = Tensor(tensor_type=vec, basis=basis, components=Jet(value=X_val, gradient=None, hessian=None))
+  X_tensor = Tensor(tensor_type=vec, basis=basis, components=Jet(value=X_val, gradient=None, hessian=None, dim=2))
   Y_tensor = Tensor(tensor_type=vec, basis=basis, components=Jet(value=Y_val, gradient=Y_grad, hessian=None))
 
-  out = Connection(basis=basis, christoffel_symbols=Jet(value=Gamma, gradient=None, hessian=None)).covariant_derivative(X_tensor, Y_tensor)
+  out = Connection(basis=basis, christoffel_symbols=Jet(value=Gamma, gradient=None, hessian=None, dim=2)).covariant_derivative(X_tensor, Y_tensor)
   expected = jnp.einsum("i,ki->k", X_val, Y_grad) + jnp.einsum("kij,i,j->k", Gamma, X_val, Y_val)
   assert jnp.allclose(out.components.value, expected)
 

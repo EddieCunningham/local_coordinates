@@ -10,7 +10,7 @@ import jax.random as random
 def a_basis():
     p = jnp.array([0., 0.])
     basis_vectors = jnp.eye(2)
-    components_jet = Jet(value=basis_vectors, gradient=None, hessian=None)
+    components_jet = Jet(value=basis_vectors, gradient=None, hessian=None, dim=2)
     return BasisVectors(p=p, components=components_jet)
 
 @pytest.fixture
@@ -21,7 +21,7 @@ def another_basis():
         [jnp.cos(angle), -jnp.sin(angle)],
         [jnp.sin(angle), jnp.cos(angle)]
     ])
-    components_jet = Jet(value=rot, gradient=None, hessian=None)
+    components_jet = Jet(value=rot, gradient=None, hessian=None, dim=2)
     return BasisVectors(p=p, components=components_jet)
 
 def test_tensortype_methods():

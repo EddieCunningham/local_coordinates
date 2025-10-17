@@ -10,6 +10,7 @@ from linsdex import AbstractBatchableObject
 from local_coordinates.basis import BasisVectors, get_basis_transform
 from plum import dispatch
 from local_coordinates.jet import Jet, jet_decorator
+import warnings
 
 class TensorType(eqx.Module):
   k: int # Covariant index
@@ -157,6 +158,8 @@ def change_coordinates(tensor: Tensor, new_basis: BasisVectors) -> Tensor:
   output_tensor_str = f"...{output_indices}"
 
   einsum_str = f"{input_tensor_str},{','.join(transforms_str_parts)}->{output_tensor_str}"
+
+  warnings.warn(f"change coordinates for tensor is incorrect!")
 
   @jet_decorator
   def transform_components(components) -> Array:

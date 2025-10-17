@@ -103,6 +103,32 @@ class Jet(AbstractBatchableObject):
   gradient: Optional[Float[Array, "N"]]
   hessian: Optional[Float[Array, "N N"]]
 
+  def __init__(self, value: Scalar, gradient: Optional[Float[Array, "N"]], hessian: Optional[Float[Array, "N N"]], dim: Optional[int] = None):
+    self.value = value
+
+    # Helper to create zeros matching value leaves with an extra trailing axis/axes of size dim.
+    def zeros_like_value_with_trailing(trailing_shape):
+      def make(v):
+        va = jnp.asarray(v)
+        return jnp.zeros((*va.shape, *trailing_shape), dtype=va.dtype)
+      return jtu.tree_map(make, self.value)
+
+    # If both derivatives are missing and no dim is supplied, we cannot infer the trailing size.
+    if gradient is None and hessian is None and dim is None:
+      raise ValueError("Must provide 'dim' when both gradient and hessian are None.")
+
+    # Set gradient: use provided, otherwise fill only if dim is given; else leave as None.
+    if gradient is not None:
+      self.gradient = gradient
+    else:
+      self.gradient = None if dim is None else zeros_like_value_with_trailing((dim,))
+
+    # Set hessian: use provided, otherwise fill only if dim is given; else leave as None.
+    if hessian is not None:
+      self.hessian = hessian
+    else:
+      self.hessian = None if dim is None else zeros_like_value_with_trailing((dim, dim))
+
   def __check_init__(self):
     # For PyTree validation, check that structures match and each leaf has correct dims
     if self.gradient is not None:
@@ -240,18 +266,41 @@ class Jet(AbstractBatchableObject):
     )
 
   def get_gradient_jet(self) -> "Jet":
+    # value is the gradient, whose last axis size equals the coordinate dim
+    dim = None
+    if self.gradient is not None:
+      dim = jnp.asarray(self.gradient).shape[-1]
+    elif self.hessian is not None:
+      dim = jnp.asarray(self.hessian).shape[-1]
     return Jet(
       value=self.gradient,
       gradient=self.hessian,
-      hessian=None
+      hessian=None,
+      dim=dim
     )
 
   def get_hessian_jet(self) -> "Jet":
+    # value is the hessian, whose last two axes are (N, N)
+    dim = None
+    if self.hessian is not None:
+      dim = jnp.asarray(self.hessian).shape[-1]
     return Jet(
       value=self.hessian,
       gradient=None,
-      hessian=None
+      hessian=None,
+      dim=dim
     )
+
+################################################################################################################
+
+def get_identity_jet(N: int, dtype: Optional[jnp.dtype] = None) -> Jet:
+  return Jet(
+    value=jnp.eye(N, dtype=dtype),
+    gradient=jnp.zeros((N, N, N), dtype=dtype),
+    hessian=jnp.zeros((N, N, N, N), dtype=dtype)
+  )
+
+################################################################################################################
 
 def function_to_jet(f: Callable[[Array], Any], x: Array) -> Jet:
   """Construct the 2-jet data of ``f`` at ``x``.
