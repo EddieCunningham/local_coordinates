@@ -86,6 +86,23 @@ def get_standard_dual_basis(p: Float[Array, "N"]) -> BasisVectors:
   """
   return BasisVectors(p=p, components=Jet(value=jnp.eye(p.shape[0]), gradient=jnp.zeros((p.shape[0], p.shape[0], p.shape[0])), hessian=jnp.zeros((p.shape[0], p.shape[0], p.shape[0], p.shape[0]))))
 
+@dispatch
+def change_coordinates(basis: BasisVectors, x_to_z: Callable[[Array], Array], x: Array) -> BasisVectors:
+  """
+  Change the coordinates of a basis vectors from one set of coordinates to another.
+  """
+  components: Jet = basis.components
+
+  # Construct a Jet with the component values as gradients
+  j = Jet(value=basis.p, gradient=components.value, hessian=components.gradient)
+
+  # Change coordinates
+  j_new: Jet = change_coordinates(j, x_to_z, x)
+
+  # Construct a new BasisVectors with the new coordinates
+  new_basis: BasisVectors = BasisVectors(p=x_to_z(x), components=j_new.get_gradient_jet())
+  return new_basis
+
 def make_coordinate_basis(basis: BasisVectors) -> BasisVectors:
   """
   Make a commuting frame (a coordinate basis) from a given basis.

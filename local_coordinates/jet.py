@@ -24,7 +24,7 @@ class Jet(AbstractBatchableObject):
   """
   Jet data J[F]_p at p ∈ M in local coordinates.
 
-  Let 𝓜 be a smooth, d-dimensional manifold, let p ∈ 𝓜, and let F: 𝓜 → ℝⁿ be
+  Let M be a smooth, d-dimensional manifold, let p ∈ M, and let F: M → ℝⁿ be
   smooth. Fix a local coordinate system (∂/∂x¹,…,∂/∂xᵈ) around p. The second
   order Jet of F at p is
     J[F]_p = ( F_p^k, ∂F_p^k/∂x^i, ∂²F_p^k/∂x^i∂x^j ),
@@ -32,7 +32,7 @@ class Jet(AbstractBatchableObject):
   output leaf of F in the chosen coordinates.
 
   Truncated Taylor evaluation (per component k): for q near p with coordinate
-  difference dx^i = (q^i − p^i),
+  difference dx^i = (q^i - p^i),
     F(q)^k ≈ F_p^k + Σ_i (∂F_p^k/∂x^i) dx^i + Σ_{i,j} (∂²F_p^k/∂x^i∂x^j) dx^i dx^j.
   In this implementation, the gradient carries a trailing axis indexed by i and
   the Hessian carries trailing axes (i, j).
@@ -294,8 +294,8 @@ def get_identity_jet(N: int, dtype: Optional[jnp.dtype] = None) -> Jet:
 def function_to_jet(f: Callable[[Array], Any], x: Array) -> Jet:
   """Construct J[F]_p (second-order Jet) for F ≡ f at p ≡ x.
 
-  Using the Jet notes notation: let 𝓜 be a smooth, d-dimensional manifold and
-  let F: 𝓜 → Y (array or PyTree), p ∈ 𝓜 with chosen local coordinates x.
+  Using the Jet notes notation: let M be a smooth, d-dimensional manifold and
+  let F: M → Y (array or PyTree), p ∈ M with chosen local coordinates x.
   For each output leaf u, returns
     ( F_p^u, ∂F_p^u/∂x^i, ∂²F_p^u/∂x^i∂x^j ),  i,j = 1,…,d.
 
@@ -401,7 +401,7 @@ def _get_coordinate_dim(gradient_or_hessian):
 def jet_decorator(f: Callable) -> Callable:
   """
   Lift a function to operate on `Jet` inputs and propagate derivatives.
-  Suppose inner maps provide jet data F at p ∈ 𝓜 and an outer function T acts
+  Suppose inner maps provide jet data F at p ∈ M and an outer function T acts
   on F(p). If inputs carry 1- or 2-jet data at p, this returns the pushed-forward
   jet of G = T ∘ F at p.
 
@@ -681,7 +681,11 @@ def jet_decorator(f: Callable) -> Callable:
 ################################################################################################################
 
 @dispatch
-def change_coordinates(jet: Jet, x_to_z: Callable[[Array], Array], x: Array) -> Jet:
+def change_coordinates(
+  jet: Jet,
+  x_to_z: Callable[[Array], Array],
+  x: Array
+) -> Jet:
   """
   Suppose that jet is J[F]_p in coordinates x and we want to express it in coordinates z.
   If z_to_x is the map x = z_to_x(z).  Then J[F]_p in coordinates z is given by

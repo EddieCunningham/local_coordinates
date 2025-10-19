@@ -1,5 +1,5 @@
 import jax.numpy as jnp
-from local_coordinates.basis import BasisVectors, change_basis, get_basis_transform, get_dual_basis_transform, make_coordinate_basis, get_standard_basis, get_standard_dual_basis
+from local_coordinates.basis import BasisVectors, change_basis, get_basis_transform, get_dual_basis_transform, make_coordinate_basis, get_standard_basis, get_standard_dual_basis, change_coordinates
 from local_coordinates.jet import Jet, function_to_jet, jet_decorator, get_identity_jet
 import pytest
 import jax
@@ -361,3 +361,35 @@ def test_dual_primal_pairing_invariance_under_transform():
   E2 = T_vec @ E
   Theta2 = Theta @ T_dual
   assert jnp.allclose(Theta2 @ E2, jnp.eye(2))
+
+
+def spherical_to_cartesian(q_in):
+    q_in = jnp.asarray(q_in)
+    N = q_in.shape[0]
+    r = q_in[0]
+    phis = q_in[1:]
+
+    def prod_sin(k):
+        return jnp.prod(jnp.sin(phis[:k])) if k > 0 else 1.0
+
+    coords = []
+    for i in range(N):
+        base = r * prod_sin(i)
+        if i < N - 1:
+            coords.append(base * jnp.cos(phis[i]))
+        else:
+            coords.append(base)
+    return jnp.stack(coords)
+
+def test_change_coordinates():
+  q = jnp.array([1.0, jnp.pi / 4, jnp.pi / 6])
+  x = spherical_to_cartesian(q)
+  basis = BasisVectors(p=q, components=Jet(value=jnp.eye(3), gradient=None, hessian=None, dim=3))
+  out: BasisVectors = change_coordinates(basis, spherical_to_cartesian, q)
+
+  # Expected: components transform by dxdz where z = spherical_to_cartesian(x)
+  J = jax.jacrev(spherical_to_cartesian)(q)  # dz/dx at q
+  expected = jnp.linalg.inv(J)               # dxdz at (q -> x)
+
+  assert jnp.allclose(out.p, x)
+  assert jnp.allclose(out.components.value, expected)
