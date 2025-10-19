@@ -8,7 +8,7 @@ from jaxtyping import Array, Float, PRNGKeyArray
 from linsdex import AbstractBatchableObject
 from plum import dispatch
 from local_coordinates.jet import Jet, jet_decorator
-from local_coordinates.basis import BasisVectors, DualBasis, get_basis_transform, get_standard_basis
+from local_coordinates.basis import BasisVectors, get_basis_transform, get_standard_basis
 
 class Frame(AbstractBatchableObject):
   """
@@ -39,28 +39,24 @@ class Frame(AbstractBatchableObject):
     def to_dual_basis_components(E_basis_vals):
       return jnp.linalg.inv(E_basis_vals)
     dual_basis_components = to_dual_basis_components(self.basis.components.get_value_jet())
-    dual_basis = DualBasis(p=self.p, components=dual_basis_components)
+    dual_basis = BasisVectors(p=self.p, components=dual_basis_components)
     return DualFrame(p=self.p, components=dual_components, basis=dual_basis)
 
 @dispatch
-def change_coordinates(frame: Frame, new_basis: BasisVectors) -> Frame:
+def change_basis(frame: Frame, new_basis: BasisVectors) -> Frame:
   """
   Transform a frame from one basis to another.
   """
   # Compute linear transform from the current basis to the new basis.
   T: Jet = get_basis_transform(frame.basis, new_basis)
 
-  # Apply only the value-level linear map to the frame components while
-  # propagating derivatives coming from the frame itself.
+  # Apply full chain rule: differentiate through both T and the frame components.
   @jet_decorator
-  def transform_components(T_value, components):
+  def transform_components(T_in, components_in):
     # Left-multiply by T (contravariant index transformation).
-    return jnp.einsum("...ij,...jk->...ik", T_value, components)
+    return jnp.einsum("...ij,...jk->...ik", T_in, components_in)
 
-  T_value = T.get_value_jet()
-  comps_val = frame.components.get_value_jet()
-  new_components = transform_components(T_value, comps_val)
-
+  new_components = transform_components(T, frame.components)
   return Frame(p=frame.p, components=new_components, basis=new_basis)
 
 def get_lie_bracket_components(frame: Frame) -> Jet:
@@ -71,7 +67,7 @@ def get_lie_bracket_components(frame: Frame) -> Jet:
   standard_basis = get_standard_basis(frame.p)
 
   # Go to the standard basis
-  frame_standard: Frame = change_coordinates(frame, standard_basis)
+  frame_standard: Frame = change_basis(frame, standard_basis)
   standard_components = frame_standard.components
 
   @jet_decorator
@@ -88,10 +84,10 @@ def get_lie_bracket_components(frame: Frame) -> Jet:
   T_jet: Jet = get_basis_transform(standard_basis, frame.basis)
 
   @jet_decorator
-  def change_basis(components_euclidean_vals: Array, T_val: Array) -> Array:
+  def transform_back(components_euclidean_vals: Array, T_val: Array) -> Array:
     return jnp.einsum("ka,aij->kij", T_val, components_euclidean_vals)
 
-  out: Jet = change_basis(components_euclidean.get_value_jet(), T_jet.get_value_jet())
+  out: Jet = transform_back(components_euclidean.get_value_jet(), T_jet.get_value_jet())
   return out
 
 class DualFrame(AbstractBatchableObject):
@@ -101,7 +97,7 @@ class DualFrame(AbstractBatchableObject):
   """
   p: Float[Array, "N"]
   components: Annotated[Jet, "N D"]
-  basis: DualBasis
+  basis: BasisVectors
 
   def __check_init__(self):
     assert isinstance(self.components, Jet), "components must be a Jet"
@@ -126,22 +122,33 @@ class DualFrame(AbstractBatchableObject):
     primal_basis = BasisVectors(p=self.p, components=primal_basis_components)
     return Frame(p=self.p, components=primal_components, basis=primal_basis)
 
-
 @dispatch
-def change_coordinates(frame: DualFrame, new_basis: DualBasis) -> DualFrame:
+def change_basis(frame: DualFrame, new_basis: BasisVectors) -> DualFrame:
   """
   Transform a covector frame from one basis to another.
   """
-  # Use the dual-basis transform; coordinates right-multiply by T_dual
-  T = get_basis_transform(frame.basis, new_basis)
+  # Right-side transform for covectors induced by vector bases:
+  # T_right = inv(B_from) @ B_to. This can be written uniformly as
+  # T_right = E_from @ inv(E_to), where E may represent either B or inv(B).
+
+  E_from: Jet = frame.basis.components
+  E_to: Jet = new_basis.components
 
   @jet_decorator
-  def transform_components(components, T_val):
-    # Right-multiply by T_dual so θ_new @ E_new = θ_old @ E_old
-    return jnp.einsum("...ij,...jk->...ik", components, T_val)
+  def invert_matrix(A):
+    return jnp.linalg.inv(A)
 
-  comps_val = frame.components.get_value_jet()
-  T_val = T.get_value_jet()
-  new_components = transform_components(comps_val, T_val)
+  E_from_inv: Jet = invert_matrix(E_from)
 
+  @jet_decorator
+  def build_right_transform(E_from_inv_in, E_to_in):
+    return jnp.einsum("...ij,...jk->...ik", E_from_inv_in, E_to_in)
+
+  T_right: Jet = build_right_transform(E_from_inv, E_to)
+
+  @jet_decorator
+  def right_multiply(components_in, T_right_in):
+    return jnp.einsum("...ij,...jk->...ik", components_in, T_right_in)
+
+  new_components: Jet = right_multiply(frame.components, T_right)
   return DualFrame(p=frame.p, components=new_components, basis=new_basis)

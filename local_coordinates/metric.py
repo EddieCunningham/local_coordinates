@@ -8,7 +8,7 @@ from jaxtyping import Array, Float, PRNGKeyArray
 from linsdex import AbstractBatchableObject
 from plum import dispatch
 from local_coordinates.jet import Jet, jet_decorator
-from local_coordinates.basis import BasisVectors, DualBasis, get_basis_transform
+from local_coordinates.basis import BasisVectors, get_dual_basis_transform
 from local_coordinates.tensor import Tensor, TensorType
 
 class RiemannianMetric(Tensor):
@@ -16,10 +16,10 @@ class RiemannianMetric(Tensor):
   A Riemannian metric is a map from a tangent space to the real numbers.
   """
   tensor_type: TensorType = eqx.field(static=True)
-  basis: DualBasis
+  basis: BasisVectors
   components: Annotated[Jet, "D D"] # The components of the tensor written in the chosen basis
 
-  def __init__(self, basis: DualBasis, components: Annotated[Jet, "D D"], **kwargs):
+  def __init__(self, basis: BasisVectors, components: Annotated[Jet, "D D"], **kwargs):
     super().__init__(tensor_type=TensorType(k=0, l=2), basis=basis, components=components)
 
   @property
@@ -40,20 +40,22 @@ class RiemannianMetric(Tensor):
 
 
 @dispatch
-def change_coordinates(metric: RiemannianMetric, new_basis: DualBasis) -> RiemannianMetric:
+def change_basis(metric: RiemannianMetric, new_basis: BasisVectors) -> RiemannianMetric:
   """
   Transform a Riemannian metric (0,2 tensor) between dual bases.
 
   If T_dual = get_basis_transform(metric.basis, new_basis), then
   g' = T_dual^T · g · T_dual.
   """
-  T_dual = get_basis_transform(metric.basis, new_basis)
+  T_dual = get_dual_basis_transform(metric.basis, new_basis)
 
   @jet_decorator
-  def transform(g_vals, T_val):
-    return jnp.einsum("...ki,...kl,...lj->...ij", T_val, g_vals, T_val)
+  def transform(g_vals, T_left, T_right):
+    # Use value-only transforms to avoid injecting ∂T into the metric jet
+    return jnp.einsum("ki,...kl,lj->...ij", T_left, g_vals, T_right)
 
   g_vals = metric.components.get_value_jet()
-  T_val = T_dual.get_value_jet()
-  new_components = transform(g_vals, T_val)
+  T_left = T_dual.get_value_jet()#.value
+  T_right = T_left
+  new_components = transform(g_vals, T_left, T_right)
   return RiemannianMetric(basis=new_basis, components=new_components)

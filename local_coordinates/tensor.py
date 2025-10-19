@@ -112,7 +112,7 @@ def function_multiply_tensor(T: Tensor, f: Jet) -> Tensor:
   return Tensor(tensor_type=T.tensor_type, basis=T.basis, components=new_components)
 
 @dispatch
-def change_coordinates(tensor: Tensor, new_basis: BasisVectors) -> Tensor:
+def change_basis(tensor: Tensor, new_basis: BasisVectors) -> Tensor:
   """
   Transform a tensor from one basis to another.
   """
@@ -163,11 +163,11 @@ def change_coordinates(tensor: Tensor, new_basis: BasisVectors) -> Tensor:
   einsum_str = f"{input_tensor_str},{','.join(transforms_str_parts)}->{output_tensor_str}"
 
   @jet_decorator
-  def transform_components(components, transforms_vals) -> Array:
+  def transform_components(components, *transforms_vals) -> Array:
     return jnp.einsum(einsum_str, components, *transforms_vals)
 
   t_comps_val = tensor.components.get_value_jet()
-  new_components: Jet = transform_components(t_comps_val, transforms)
+  new_components: Jet = transform_components(t_comps_val, *transforms)
 
   tensor_class = type(tensor) # e.g. RiemannianMetric
   return tensor_class(

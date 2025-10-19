@@ -1,7 +1,7 @@
 import jax.numpy as jnp
 import pytest
 from local_coordinates.basis import BasisVectors, get_basis_transform
-from local_coordinates.tensor import Tensor, TensorType, change_coordinates
+from local_coordinates.tensor import Tensor, TensorType, change_basis
 from local_coordinates.jet import Jet, function_to_jet
 import jax
 import jax.random as random
@@ -79,7 +79,7 @@ def test_change_coordinates_vector(a_basis, another_basis):
     hessian = jax.random.normal(key, (2, 2, 2))
     tensor = Tensor(tensor_type=tt, basis=a_basis, components=Jet(value=vec, gradient=gradient, hessian=hessian))
 
-    new_tensor = change_coordinates(tensor, another_basis)
+    new_tensor = change_basis(tensor, another_basis)
 
     # Manual transformation
     T = get_basis_transform(a_basis, another_basis)
@@ -103,7 +103,7 @@ def test_change_coordinates_covector(a_basis, another_basis):
     hessian = jax.random.normal(key, (2, 2, 2))
     tensor = Tensor(tensor_type=tt, basis=a_basis, components=Jet(value=covec, gradient=gradient, hessian=hessian))
 
-    new_tensor = change_coordinates(tensor, another_basis)
+    new_tensor = change_basis(tensor, another_basis)
 
     # Manual transformation
     T = get_basis_transform(a_basis, another_basis)
@@ -126,7 +126,7 @@ def test_change_coordinates_metric_tensor(a_basis, another_basis):
     hessian = jax.random.normal(key, (2, 2, 2, 2))
     tensor = Tensor(tensor_type=tt, basis=a_basis, components=Jet(value=metric, gradient=gradient, hessian=hessian))
 
-    new_tensor = change_coordinates(tensor, another_basis)
+    new_tensor = change_basis(tensor, another_basis)
 
     # Manual transformation
     T = get_basis_transform(a_basis, another_basis)
@@ -148,7 +148,7 @@ def test_change_coordinates_tensor_0_2(a_basis, another_basis):
     hessian = jax.random.normal(key, (2, 2, 2, 2))
     tensor = Tensor(tensor_type=tt, basis=a_basis, components=Jet(value=components, gradient=gradient, hessian=hessian))
 
-    new_tensor = change_coordinates(tensor, another_basis)
+    new_tensor = change_basis(tensor, another_basis)
 
     # Manual transformation
     T = get_basis_transform(a_basis, another_basis)
@@ -170,7 +170,7 @@ def test_change_coordinates_tensor_2_2(a_basis, another_basis):
     hessian = jax.random.normal(key, (2, 2, 2, 2, 2, 2))
     tensor = Tensor(tensor_type=tt, basis=a_basis, components=Jet(value=components, gradient=gradient, hessian=hessian))
 
-    new_tensor = change_coordinates(tensor, another_basis)
+    new_tensor = change_basis(tensor, another_basis)
 
     # Manual transformation
     T = get_basis_transform(a_basis, another_basis)

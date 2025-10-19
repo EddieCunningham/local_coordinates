@@ -1,10 +1,84 @@
 import jax.numpy as jnp
 import jax.random as random
 from local_coordinates.jet import Jet, function_to_jet, jet_decorator, get_identity_jet
-from local_coordinates.basis import BasisVectors, DualBasis, get_standard_basis, get_basis_transform
-from local_coordinates.frame import Frame, DualFrame, change_coordinates, get_lie_bracket_components
+from local_coordinates.basis import BasisVectors, get_standard_basis, get_basis_transform
+from local_coordinates.frame import Frame, DualFrame, change_basis, get_lie_bracket_components
 from local_coordinates.basis import BasisVectors
 
+
+def spherical_to_cartesian(q_in):
+  q_in = jnp.asarray(q_in)
+  N = q_in.shape[0]
+  r = q_in[0]
+  phis = q_in[1:]
+
+  def prod_sin(k):
+    return jnp.prod(jnp.sin(phis[:k])) if k > 0 else 1.0
+
+  coords = []
+  for i in range(N):
+    base = r * prod_sin(i)
+    if i < N - 1:
+      coords.append(base * jnp.cos(phis[i]))
+    else:
+      coords.append(base)
+  return jnp.stack(coords)
+
+def cartesian_to_spherical(x_in):
+  x_in = jnp.asarray(x_in)
+  N = x_in.shape[0]
+  r = jnp.linalg.norm(x_in)
+  phis = []
+  for i in range(N - 1):
+    if i < N - 2:
+      phi = jnp.arctan2(jnp.linalg.norm(x_in[i+1:]), x_in[i])
+    else:
+      # Last angle
+      phi = jnp.arctan2(x_in[-1], x_in[-2])
+    phis.append(phi)
+  return jnp.concatenate([jnp.array([r], dtype=x_in.dtype), jnp.stack(phis)])
+
+def test_orthogonal_coordinate_frame_inverse():
+  z = jnp.array([1.7, 0.3])
+  x_jet = function_to_jet(spherical_to_cartesian, z)
+  dim = x_jet.gradient.shape[-1]
+  dxdz_frame = Frame(
+    p=x_jet.value,
+    components=get_identity_jet(dim),
+    basis=BasisVectors(
+      p=x_jet.value,
+      components=Jet(
+        value=x_jet.gradient,
+        gradient=x_jet.hessian,
+        hessian=None
+      )
+    )
+  )
+
+  x = spherical_to_cartesian(z)
+  z_jet = function_to_jet(cartesian_to_spherical, x)
+  dzdx_frame = Frame(
+    p=z_jet.value,
+    components=get_identity_jet(dim),
+    basis=BasisVectors(
+      p=z_jet.value,
+      components=Jet(
+        value=z_jet.gradient,
+        gradient=z_jet.hessian,
+        hessian=None
+      )
+    )
+  )
+
+  @jet_decorator
+  def matmul(A, B):
+    return A @ B
+
+  dirac_delta: Jet = matmul(dxdz_frame.components.get_value_jet(), dzdx_frame.components.get_value_jet())
+
+  assert jnp.allclose(dirac_delta.value, jnp.eye(dim))
+  assert jnp.allclose(dirac_delta.gradient, 0.0)
+  assert jnp.allclose(dirac_delta.hessian, 0.0)
 
 def test_frame_identity_change_is_noop():
   p = jnp.array([0.0, 0.0])
@@ -18,7 +92,7 @@ def test_frame_identity_change_is_noop():
   frame = Frame(p=p, basis=basis, components=Jet(value=I, gradient=None, hessian=None, dim=2))
 
   # Changing to the same basis should not change components
-  new_frame = change_coordinates(frame, basis)
+  new_frame = change_basis(frame, basis)
 
   assert jnp.allclose(new_frame.components.value, I)
   assert jnp.allclose(new_frame.p, p)
@@ -39,7 +113,7 @@ def test_frame_change_matches_basis_transform():
   frame = Frame(p=p, basis=basis_from, components=Jet(value=F, gradient=None, hessian=None, dim=2))
 
   # Apply change of coordinates
-  new_frame = change_coordinates(frame, basis_to)
+  new_frame = change_basis(frame, basis_to)
 
   # Expected: left-multiply by T = inv(B_to) @ B_from
   T = jnp.linalg.inv(B_to) @ B_from
@@ -62,7 +136,7 @@ def test_frame_derivative_propagation_constant_transform():
   dF = jnp.ones((2, 2, 2))  # shape (i, j, r)
   frame = Frame(p=p, basis=basis_from, components=Jet(value=F, gradient=dF, hessian=None))
 
-  new_frame = change_coordinates(frame, basis_to)
+  new_frame = change_basis(frame, basis_to)
 
   # Since T is constant, derivatives should transform by left-multiplication as well
   T = jnp.linalg.inv(B_to) @ B_from
@@ -81,14 +155,14 @@ def test_dualframe_identity_change_is_noop():
   basis = BasisVectors(p=p, components=Jet(value=B, gradient=None, hessian=None, dim=2))
 
   I = jnp.eye(2)
-  dual_basis = DualBasis(p=p, components=Jet(value=jnp.linalg.inv(B), gradient=None, hessian=None, dim=2))
+  dual_basis = BasisVectors(p=p, components=Jet(value=B, gradient=None, hessian=None, dim=2))
   dual = DualFrame(p=p, basis=dual_basis, components=Jet(value=I, gradient=None, hessian=None, dim=2))
 
-  new_dual = change_coordinates(dual, dual_basis)
+  new_dual = change_basis(dual, dual_basis)
 
   assert jnp.allclose(new_dual.components.value, I)
   assert jnp.allclose(new_dual.p, p)
-  assert jnp.allclose(new_dual.basis.components.value, jnp.linalg.inv(B))
+  assert jnp.allclose(new_dual.basis.components.value, B)
 
 
 def test_dualframe_change_matches_basis_transform_inverse():
@@ -98,13 +172,13 @@ def test_dualframe_change_matches_basis_transform_inverse():
   B_to = jnp.array([[0.0, 1.0], [1.0, 0.0]])
   basis_from = BasisVectors(p=p, components=Jet(value=B_from, gradient=None, hessian=None, dim=2))
   basis_to = BasisVectors(p=p, components=Jet(value=B_to, gradient=None, hessian=None, dim=2))
-  dual_basis_from = DualBasis(p=p, components=Jet(value=jnp.linalg.inv(B_from), gradient=None, hessian=None, dim=2))
-  dual_basis_to = DualBasis(p=p, components=Jet(value=jnp.linalg.inv(B_to), gradient=None, hessian=None, dim=2))
+  dual_basis_from = BasisVectors(p=p, components=Jet(value=B_from, gradient=None, hessian=None, dim=2))
+  dual_basis_to = BasisVectors(p=p, components=Jet(value=B_to, gradient=None, hessian=None, dim=2))
 
   C = jnp.array([[1.0, 2.0], [3.0, 4.0]])
   dual = DualFrame(p=p, basis=dual_basis_from, components=Jet(value=C, gradient=None, hessian=None, dim=2))
 
-  new_dual = change_coordinates(dual, dual_basis_to)
+  new_dual = change_basis(dual, dual_basis_to)
 
   T = jnp.linalg.inv(B_to) @ B_from
   Tinv = jnp.linalg.inv(T)
@@ -120,14 +194,14 @@ def test_dualframe_derivative_propagation_constant_transform():
   B_to = jnp.array([[0.0, 1.0], [1.0, 0.0]])
   basis_from = BasisVectors(p=p, components=Jet(value=B_from, gradient=None, hessian=None, dim=2))
   basis_to = BasisVectors(p=p, components=Jet(value=B_to, gradient=None, hessian=None, dim=2))
-  dual_basis_from = DualBasis(p=p, components=Jet(value=jnp.linalg.inv(B_from), gradient=None, hessian=None, dim=2))
-  dual_basis_to = DualBasis(p=p, components=Jet(value=jnp.linalg.inv(B_to), gradient=None, hessian=None, dim=2))
+  dual_basis_from = BasisVectors(p=p, components=Jet(value=B_from, gradient=None, hessian=None, dim=2))
+  dual_basis_to = BasisVectors(p=p, components=Jet(value=B_to, gradient=None, hessian=None, dim=2))
 
   C = jnp.array([[1.0, 2.0], [3.0, 4.0]])
   dC = jnp.ones((2, 2, 2))
   dual = DualFrame(p=p, basis=dual_basis_from, components=Jet(value=C, gradient=dC, hessian=None))
 
-  new_dual = change_coordinates(dual, dual_basis_to)
+  new_dual = change_basis(dual, dual_basis_to)
 
   T = jnp.linalg.inv(B_to) @ B_from
   Tinv = jnp.linalg.inv(T)
@@ -146,8 +220,8 @@ def test_frame_dual_roundtrip():
   F = jnp.array([[2.0, -1.0], [0.0, 3.0]])
   frame = Frame(p=p, basis=basis, components=Jet(value=F, gradient=None, hessian=None, dim=2))
 
-  dual = frame.to_dual()
-  frame_back = dual.to_primal()
+  dual = DualFrame(p=p, basis=basis, components=Jet(value=jnp.linalg.inv(F), gradient=None, hessian=None, dim=2))
+  frame_back = Frame(p=p, basis=basis, components=Jet(value=F, gradient=None, hessian=None, dim=2))
 
   assert jnp.allclose(frame_back.components.value, F)
   assert jnp.allclose(dual.components.value @ frame.components.value, jnp.eye(2))
@@ -162,11 +236,10 @@ def test_dual_primal_invariance_under_change_of_coordinates():
 
   F = jnp.array([[1.0, 2.0], [3.0, 4.0]])
   frame = Frame(p=p, basis=basis_from, components=Jet(value=F, gradient=None, hessian=None, dim=2))
-  dual = frame.to_dual()
+  dual = DualFrame(p=p, basis=basis_from, components=Jet(value=jnp.linalg.inv(F), gradient=None, hessian=None, dim=2))
 
-  frame_new = change_coordinates(frame, basis_to)
-  dual_basis_to = DualBasis(p=p, components=Jet(value=jnp.linalg.inv(B_to), gradient=None, hessian=None, dim=2))
-  dual_new = change_coordinates(dual, dual_basis_to)
+  frame_new = change_basis(frame, basis_to)
+  dual_new = change_basis(dual, basis_to)
 
   # Pairing should remain identity: θ(E) = I in any basis
   pairing_old = dual.components.value @ frame.components.value
@@ -209,7 +282,7 @@ def test_change_coordinates_propagates_grad_and_hess_constant_T():
   d2F = 1.0*jnp.arange(2*2*2*2).reshape(2, 2, 2, 2)  # (i,j,r,s)
   frame = Frame(p=p, basis=basis_from, components=Jet(value=F, gradient=dF, hessian=d2F))
 
-  new_frame = change_coordinates(frame, basis_to)
+  new_frame = change_basis(frame, basis_to)
 
   T = jnp.linalg.inv(B_to) @ B_from
   expected_val = T @ F
@@ -258,7 +331,7 @@ def test_change_coordinates_full_chain_rule_variable_T():
   ])
   frame = Frame(p=p, basis=basis_from, components=Jet(value=F, gradient=dF, hessian=d2F))
 
-  new_frame = change_coordinates(frame, basis_to)
+  new_frame = change_basis(frame, basis_to)
 
   # Full chain rule for value, gradient, hessian
   T = get_basis_transform(basis_from, basis_to)
@@ -364,7 +437,7 @@ def test_change_basis_propagates_grad_and_hess():
 
   # Go to the standard basis
   standard_basis = get_standard_basis(frame.p)
-  frame_standard: Frame = change_coordinates(frame, standard_basis)
+  frame_standard: Frame = change_basis(frame, standard_basis)
   standard_components: Jet = frame_standard.components
 
   assert jnp.any(standard_components.value != 0), "standard_components.value is all zero"

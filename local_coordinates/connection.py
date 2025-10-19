@@ -6,14 +6,15 @@ from jax import random
 import equinox as eqx
 from jaxtyping import Array, Float, PRNGKeyArray
 from linsdex import AbstractBatchableObject
-from local_coordinates.basis import BasisVectors, DualBasis, get_basis_transform, get_standard_basis
+from local_coordinates.basis import BasisVectors, get_basis_transform, get_standard_basis
 from local_coordinates.frame import get_lie_bracket_components
 from plum import dispatch
-from local_coordinates.tensor import Tensor, change_coordinates
+from local_coordinates.tensor import Tensor, change_basis
 from local_coordinates.jet import Jet
 from local_coordinates.jet import jet_decorator
 from local_coordinates.metric import RiemannianMetric
-
+from local_coordinates.jet import get_identity_jet
+from local_coordinates.frame import Frame
 class Connection(AbstractBatchableObject):
   """
   A Connection is a map from one tangent space to another.
@@ -34,8 +35,8 @@ class Connection(AbstractBatchableObject):
     assert X.tensor_type.is_vector(), f"X must be a vector, got {X.tensor_type}"
 
     # Make sure X and Y are written in the same basis
-    X: Tensor = change_coordinates(X, self.basis)
-    Y: Tensor = change_coordinates(Y, self.basis)
+    X: Tensor = change_basis(X, self.basis)
+    Y: Tensor = change_basis(Y, self.basis)
 
     # Compute the covariant derivative
     @jet_decorator
@@ -52,7 +53,7 @@ class Connection(AbstractBatchableObject):
     return Tensor(X.tensor_type, self.basis, new_components)
 
 @dispatch
-def change_coordinates(connection: Connection, new_basis: BasisVectors) -> Connection:
+def change_basis(connection: Connection, new_basis: BasisVectors) -> Connection:
   """
   Transform a connection from one basis to another. The Christoffel symbols
   are not tensors, so the transformation rule is a bit different.
@@ -72,10 +73,11 @@ def change_coordinates(connection: Connection, new_basis: BasisVectors) -> Conne
   return Connection(basis=new_basis, christoffel_symbols=new_christoffel_symbols)
 
 def get_levi_civita_connection(metric: RiemannianMetric) -> Connection:
-  # Get the lie bracket components of the basis
-  dual_basis: DualBasis = metric.basis
-  basis: BasisVectors = dual_basis.to_primal()
-  c_kij: Jet = get_lie_bracket_components(basis)
+  # Accept both primal and dual bases on the metric; convert to primal if needed
+  basis: BasisVectors = metric.basis
+
+  N = basis.p.shape[0]
+  c_kij: Jet = get_lie_bracket_components(Frame(p=basis.p, basis=basis, components=get_identity_jet(N)))
 
   # Get the metric components
   g_ijk: Jet = metric.components.get_gradient_jet()
@@ -89,9 +91,13 @@ def get_levi_civita_connection(metric: RiemannianMetric) -> Connection:
 
     c_kij_lower = jnp.einsum("mij,mk->kij", c_kij_val, g_ij_val)
 
-    t1 = jnp.einsum("ijk->jki", g_ijk_grad)
-    t2 = jnp.einsum("ijk->ikj", g_ijk_grad)
-    t3 = jnp.einsum("ijk->ijk", g_ijk_grad)
+    # Arrange all terms with axes (k,i,j):
+    # t1[k,i,j] = g_{jk,i}
+    t1 = jnp.einsum("jki->kij", g_ijk_grad)
+    # t2[k,i,j] = g_{ik,j}
+    t2 = jnp.einsum("ikj->kij", g_ijk_grad)
+    # t3[k,i,j] = g_{ij,k}
+    t3 = jnp.einsum("ijk->kij", g_ijk_grad)
     t4 = jnp.einsum("kij->kij", c_kij_lower)
     t5 = jnp.einsum("kij->jik", c_kij_lower)
     t6 = jnp.einsum("kij->ijk", c_kij_lower)
@@ -106,7 +112,6 @@ def get_levi_civita_connection(metric: RiemannianMetric) -> Connection:
   g_ij_val = metric.components.get_value_jet()
   g_ijk_grad = g_ijk.get_value_jet()
   christoffel_symbols: Jet = get_christoffel_symbols(c_kij_val, g_ij_val, g_ijk_grad)
-  import pdb; pdb.set_trace()
   return Connection(basis=basis, christoffel_symbols=christoffel_symbols)
 
 
