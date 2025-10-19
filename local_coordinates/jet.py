@@ -639,15 +639,15 @@ def jet_decorator(f: Callable) -> Callable:
 
     # 3. DIFFERENTIATION: Decompose into gradient and Hessian calculations.
     # f(z)
-    f_primals = lambda a: f(*a, **kwargs)
+    T = lambda a: f(*a, **kwargs)
 
     # df/dx^u =
-    gradient = _get_gradient(f_primals, primals, total_grad_tangent)
+    gradient = _get_gradient(T, primals, total_grad_tangent)
 
     # d^2f/dx^u dx^v = d/dx^v[ df/dx^u ]
     if hessian_possible:
-      transport = _get_hessian_transport(f_primals, primals, total_hess_tangent)
-      intrinsic = _get_hessian_curvature(f_primals, primals, total_grad_tangent)
+      transport = _get_hessian_transport(T, primals, total_hess_tangent)
+      intrinsic = _get_hessian_curvature(T, primals, total_grad_tangent)
       hessian = jtu.tree_map(jnp.add, transport, intrinsic)
     else:
       hessian = None
@@ -680,15 +680,31 @@ def jet_decorator(f: Callable) -> Callable:
 
 ################################################################################################################
 
-def change_coordinates(jet: Jet, transition_map: Callable[[Array], Array]) -> Jet:
+@dispatch
+def change_coordinates(jet: Jet, x_to_z: Callable[[Array], Array], x: Array) -> Jet:
   """
   Suppose that jet is J[F]_p in coordinates x and we want to express it in coordinates z.
-  If transition_map is the map x = transition_map(z).  Then J[F]_p in coordinates z is given by
+  If z_to_x is the map x = z_to_x(z).  Then J[F]_p in coordinates z is given by
   J[F]_z = (F_z^k, ∂F_z^k/∂z^i, ∂²F_z^k/∂z^i∂z^j),
   where
-  F_z^k = F_x^k ∘ transition_map,
+  F_z^k = F_x^k ∘ z_to_x,
   ∂F_z^k/∂z^i = (∂F_x^k/∂x^j) · (∂x^j/∂z^i),
   ∂²F_z^k/∂z^i∂z^j = (∂F_x^k/∂x^l) · (∂²x^l/∂z^i∂z^j) + (∂²F_x^k/∂x^l∂x^m) · (∂x^l/∂z^i) · (∂x^m/∂z^j),
   for i,j = 1,…,d and k = 1,…,n.
   """
-  pass
+  Fp = jet.value
+  dFpdx = jet.gradient
+  d2Fpdx2 = jet.hessian
+
+  dzdx = jax.jacrev(x_to_z)(x)
+  d2zdx2 = jax.jacfwd(jax.jacrev(x_to_z))(x)
+  dxdz = jnp.linalg.inv(dzdx)
+
+  dFpdz = jnp.einsum("...a,ai->...i", dFpdx, dxdz)
+
+  hess_inner_term1 = jnp.einsum("cbd,...c->...bd", d2zdx2, dFpdz)
+  hess_inner_term = -hess_inner_term1 + d2Fpdx2
+
+  d2Fpdz2 = jnp.einsum("...db,bj,di->...ij", hess_inner_term, dxdz, dxdz)
+
+  return Jet(value=Fp, gradient=dFpdz, hessian=d2Fpdz2)

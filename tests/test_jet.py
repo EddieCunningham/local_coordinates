@@ -1,7 +1,7 @@
 import jax
 import jax.numpy as jnp
 import pytest
-from local_coordinates.jet import Jet, function_to_jet
+from local_coordinates.jet import Jet, function_to_jet, change_coordinates
 from local_coordinates.jet import jet_decorator
 import jax.tree_util as jtu
 import equinox as eqx
@@ -877,6 +877,93 @@ def test_jet_decorator_pytree_with_matrix_values():
 
     # Gradient should exist
     assert output_jet.gradient.shape == (2,)
+
+
+def spherical_to_cartesian(q_in):
+    q_in = jnp.asarray(q_in)
+    N = q_in.shape[0]
+    r = q_in[0]
+    phis = q_in[1:]
+
+    def prod_sin(k):
+        return jnp.prod(jnp.sin(phis[:k])) if k > 0 else 1.0
+
+    coords = []
+    for i in range(N):
+        base = r * prod_sin(i)
+        if i < N - 1:
+            coords.append(base * jnp.cos(phis[i]))
+        else:
+            coords.append(base)
+    return jnp.stack(coords)
+
+
+def cartesian_to_spherical(x_in):
+    x_in = jnp.asarray(x_in)
+    N = x_in.shape[0]
+    r = jnp.linalg.norm(x_in)
+    phis = []
+    for i in range(N - 1):
+        if i < N - 2:
+            phi = jnp.arctan2(jnp.linalg.norm(x_in[i+1:]), x_in[i])
+        else:
+            # Last angle
+            phi = jnp.arctan2(x_in[-1], x_in[-2])
+        phis.append(phi)
+    return jnp.concatenate([jnp.array([r], dtype=x_in.dtype), jnp.stack(phis)])
+
+
+def test_change_coordinates_round_trip_scalar():
+    # Base point in Cartesian (avoid singularities)
+    x = jnp.array([1.2, -0.7, 0.9])
+
+    # Define scalar F
+    def F(xvec):
+        return xvec[0]**2 + jnp.sin(xvec[1]) + xvec[2]**3
+
+    # Jet in x-coordinates
+    jet_x = function_to_jet(F, x)
+
+    # Change to spherical coordinates z = cartesian_to_spherical(x)
+    z = cartesian_to_spherical(x)
+    jet_z = change_coordinates(jet_x, cartesian_to_spherical, x)
+
+    # Change back to Cartesian using mapping current->new: z -> x
+    jet_x_back = change_coordinates(jet_z, spherical_to_cartesian, z)
+
+    # Compare value/gradient/Hessian
+    assert jnp.allclose(jet_x_back.value, jet_x.value, atol=1e-6, rtol=1e-6)
+    assert jnp.allclose(jet_x_back.gradient, jet_x.gradient, atol=1e-5, rtol=1e-5)
+    assert jnp.allclose(jet_x_back.hessian, jet_x.hessian, atol=2e-5, rtol=2e-5)
+
+
+def test_change_coordinates_matches_composed_function():
+    # Base point and its spherical coordinates
+    x = jnp.array([0.8, 1.1, -0.6])
+    z = cartesian_to_spherical(x)
+
+    # Vector-valued F for a stronger test
+    def F(xvec):
+        return jnp.array([
+            xvec[0]**2 + xvec[1],
+            jnp.sin(xvec[1]) * xvec[2],
+            jnp.exp(xvec[0]) + xvec[2]**2,
+        ])
+
+    # Transform Jet(F) from x to z using change_coordinates
+    jet_x = function_to_jet(F, x)
+    jet_z = change_coordinates(jet_x, cartesian_to_spherical, x)
+
+    # Independently compute Jet of the composed function G(z) = F(spherical_to_cartesian(z)) at z
+    def G(zvec):
+        return F(spherical_to_cartesian(zvec))
+
+    jet_z_direct = function_to_jet(G, z)
+
+    # Compare in z-coordinates
+    assert jnp.allclose(jet_z.value, jet_z_direct.value, atol=1e-6, rtol=1e-6)
+    assert jnp.allclose(jet_z.gradient, jet_z_direct.gradient, atol=1e-5, rtol=1e-5)
+    assert jnp.allclose(jet_z.hessian, jet_z_direct.hessian, atol=2e-5, rtol=2e-5)
 
 
 def test_jet_decorator_empty_pytree_components():

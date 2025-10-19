@@ -5,7 +5,7 @@ J[F]_p = \left(F_p^k, \frac{\partial F_p^k}{\partial x^i}, \frac{\partial^2 F_p^
 $$
 The Jet of $F$ at $p$ represents the second order Taylor expansion of $F$ at $p$ in this coordinate system.  That is,
 $$
-F(q)^k \approx F_p^k + \sum_{i=1}^d \frac{\partial F_p^k}{\partial x^i} (q^i - p^i) + \sum_{i,j=1}^d \frac{\partial^2 F_p^k}{\partial x^i \partial x^j} (q^i - p^i)(q^j - p^j)
+F(q)^k \approx F_p^k + \sum_{i=1}^d \frac{\partial F_p^k}{\partial x^i} (q^i - p^i) + \frac{1}{2}\sum_{i,j=1}^d \frac{\partial^2 F_p^k}{\partial x^i \partial x^j} (q^i - p^i)(q^j - p^j)
 $$
 for $q \in \mathcal{M}$ in a neighborhood of $p$.  To work with Jets, there are two operations that we need to be able to perform.  The first is a change of coordinates and the second is pushforward through a smooth map.
 
@@ -26,6 +26,27 @@ $$
 &= \frac{\partial^2 x^a}{\partial z^j \partial z^i} \frac{\partial F_p^k}{\partial x^a} + \frac{\partial x^a}{\partial z^i} \frac{\partial^2 F_p^k}{\partial x^a \partial x^b} \frac{\partial x^b}{\partial z^j}
 \end{align}
 $$
+
+This expression is not too practical though as it requires the inverse of the coordinate transformation.  Instead, we can write the result in terms of the Jacobian of the coordinate transformation, $z(x)$ by using the fact that $\frac{\partial x}{\partial z} = \left(\frac{\partial z}{\partial x}\right)^{-1}$.  This means that
+$$
+\frac{\partial x^a}{\partial z^i} = {\left(\frac{\partial z}{\partial x}\right)^{-1}}_i^a
+$$
+and
+$$
+\begin{align}
+  \frac{\partial^2 x^a}{\partial z^i \partial z^j} &= \frac{\partial}{\partial z^j}\left(\frac{\partial x^a}{\partial z^i}\right) \\
+  &= \frac{\partial x^b}{\partial z^j}\frac{\partial}{\partial x^b}\left(\frac{\partial x^a}{\partial z^i}\right) \\
+  &= -\frac{\partial x^b}{\partial z^j}\frac{\partial x^a}{\partial z^c}\frac{\partial^2 z^c}{\partial x^b \partial x^d}\frac{\partial x^d}{\partial z^i}
+\end{align}
+$$
+and so we have
+$$
+\begin{align}
+\frac{\partial^2 F_p^k}{\partial z^i \partial z^j} &= -\frac{\partial x^b}{\partial z^j}\frac{\partial^2 z^c}{\partial x^b \partial x^d}\frac{\partial x^d}{\partial z^i}\frac{\partial x^a}{\partial z^c}\frac{\partial F_p^k}{\partial x^a} + \frac{\partial x^a}{\partial z^i} \frac{\partial^2 F_p^k}{\partial x^a \partial x^b} \frac{\partial x^b}{\partial z^j} \\
+&= \frac{\partial x^b}{\partial z^j}\left(-\frac{\partial^2 z^c}{\partial x^b \partial x^d}\frac{\partial x^a}{\partial z^c}\frac{\partial F_p^k}{\partial x^a} + \frac{\partial^2 F_p^k}{\partial x^d \partial x^b}\right)\frac{\partial x^d}{\partial z^i}
+\end{align}
+$$
+
 
 ## Pushforward through a smooth map
 Next, suppose that $T: \mathbb{R}^n \to \mathbb{R}^m$ is a smooth transformation of the Jet value.  Let $G(p) = T\circ F(p)$.  Then, the Jet of $G$ at $p$ is given by
