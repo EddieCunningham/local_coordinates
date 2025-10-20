@@ -45,7 +45,7 @@ def test_jet_batching():
     hessian_2d = jnp.stack([hessian_1d, hessian_1d])
     jet_2d = Jet(value=value_2d, gradient=gradient_2d, hessian=hessian_2d)
     # Based on the current implementation of Jet.batch_size for ndim > 1
-    assert jet_2d.batch_size == (2,)
+    assert jet_2d.batch_size == (2, 2)
 
 def test_jet_call_method():
     """Tests the __call__ method for Taylor series approximation."""

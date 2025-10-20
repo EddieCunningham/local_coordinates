@@ -1,9 +1,10 @@
 import jax.numpy as jnp
-from local_coordinates.basis import BasisVectors, change_basis, get_basis_transform, get_dual_basis_transform, make_coordinate_basis, get_standard_basis, get_standard_dual_basis, change_coordinates
+from local_coordinates.basis import BasisVectors, change_basis, get_basis_transform, get_dual_basis_transform, make_coordinate_basis, get_standard_basis, get_standard_dual_basis, change_coordinates, apply_covariant_transform, apply_contravariant_transform
 from local_coordinates.jet import Jet, function_to_jet, jet_decorator, get_identity_jet
 import pytest
 import jax
 import jax.random as random
+from jaxtyping import Array
 
 def test_basis_vectors_creation():
   p = jnp.array([1., 2.])
@@ -381,6 +382,20 @@ def spherical_to_cartesian(q_in):
             coords.append(base)
     return jnp.stack(coords)
 
+def cartesian_to_spherical(x_in):
+  x_in = jnp.asarray(x_in)
+  N = x_in.shape[0]
+  r = jnp.linalg.norm(x_in)
+  phis = []
+  for i in range(N - 1):
+    if i < N - 2:
+      phi = jnp.arctan2(jnp.linalg.norm(x_in[i+1:]), x_in[i])
+    else:
+      # Last angle
+      phi = jnp.arctan2(x_in[-1], x_in[-2])
+    phis.append(phi)
+  return jnp.concatenate([jnp.array([r], dtype=x_in.dtype), jnp.stack(phis)])
+
 def test_change_coordinates():
   q = jnp.array([1.0, jnp.pi / 4, jnp.pi / 6])
   x = spherical_to_cartesian(q)
@@ -393,3 +408,70 @@ def test_change_coordinates():
 
   assert jnp.allclose(out.p, x)
   assert jnp.allclose(out.components.value, expected)
+
+def test_change_coordinates_round_trip():
+  q = jnp.array([1.0, jnp.pi / 4, jnp.pi / 6])
+  x = spherical_to_cartesian(q)
+  value = random.normal(random.key(0), (3, 3))
+  gradient = random.normal(random.key(0), (3, 3, 3))
+  hessian = None
+  basis = BasisVectors(p=q, components=Jet(value=value, gradient=gradient, hessian=hessian, dim=3))
+  out: BasisVectors = change_coordinates(basis, spherical_to_cartesian, q)
+  out2: BasisVectors = change_coordinates(out, cartesian_to_spherical, x)
+  assert jnp.allclose(out2.p, q)
+  assert jnp.allclose(out2.components.value, value)
+  assert jnp.allclose(out2.components.gradient, gradient)
+
+def test_change_coordinates_matches_basis_transform():
+  q = jnp.array([1.0, jnp.pi / 4, jnp.pi / 6])
+  x = spherical_to_cartesian(q)
+
+  # Create a random basis
+  value = random.normal(random.key(0), (3, 3))
+  gradient = random.normal(random.key(0), (3, 3, 3))
+  hessian = random.normal(random.key(0), (3, 3, 3, 3))
+  x_basis = BasisVectors(p=q, components=Jet(value=value, gradient=gradient, hessian=hessian, dim=3))
+
+  # Change its coordinates
+  z_basis: BasisVectors = change_coordinates(x_basis, spherical_to_cartesian, q)
+
+  # Get the basis transform
+  transform = get_basis_transform(x_basis, z_basis)
+  z_basis_components_comp: Jet = apply_covariant_transform(transform, x_basis.components)
+
+  # Check that the transformed components are consistent with the coordinate change
+  assert jnp.allclose(z_basis_components_comp.value, z_basis.components.value)
+  assert jnp.allclose(z_basis_components_comp.gradient, z_basis.components.gradient)
+
+
+def test_apply_contravariant_transform_vector():
+  q = jnp.array([1.0, jnp.pi / 4, jnp.pi / 6])
+
+  # Random basis to produce a nontrivial transform Jet
+  value = random.normal(random.key(0), (3, 3))
+  gradient = random.normal(random.key(0), (3, 3, 3))
+  hessian = random.normal(random.key(0), (3, 3, 3, 3))
+  x_basis = BasisVectors(p=q, components=Jet(value=value, gradient=gradient, hessian=hessian, dim=3))
+
+  # Build a second basis via coordinate change and the basis transform T
+  z_basis: BasisVectors = change_coordinates(x_basis, spherical_to_cartesian, q)
+  T: Jet = get_basis_transform(x_basis, z_basis)
+
+  # A contravariant vector's coordinates transform via W = T V
+  V = random.normal(random.key(1), (3,))
+  V_jet = Jet(value=V, gradient=None, hessian=None, dim=3)
+
+  # Use the helper under test
+  W_comp: Jet = apply_contravariant_transform(T, V_jet)
+
+  # Independent expected result via direct matrix-vector multiply with the same Jet transform
+  @jet_decorator
+  def matvec(T_val: Array, v_val: Array) -> Array:
+    return jnp.einsum("ij,j->i", T_val, v_val)
+
+  expected: Jet = matvec(T.get_value_jet(), V_jet.get_value_jet())
+
+  # Compare value and derivatives
+  assert jnp.allclose(W_comp.value, expected.value)
+  assert jnp.allclose(W_comp.gradient, expected.gradient)
+  assert (W_comp.hessian is None and expected.hessian is None)

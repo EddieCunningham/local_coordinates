@@ -6,7 +6,7 @@ import jax.tree_util as jtu
 from jax import random
 import equinox as eqx
 from jaxtyping import Array, Float, PRNGKeyArray, Scalar
-from linsdex import AbstractBatchableObject
+from linsdex import AbstractBatchableObject, auto_vmap
 from plum import dispatch
 from functools import partial, wraps
 import inspect
@@ -164,7 +164,7 @@ class Jet(AbstractBatchableObject):
     elif f.ndim == 1:
       return f.shape[0]
     else:
-      return f.shape[:-1]
+      return f.shape
 
   def __call__(self, dx: Any):
     """
@@ -688,10 +688,9 @@ def change_coordinates(
 ) -> Jet:
   """
   Suppose that jet is J[F]_p in coordinates x and we want to express it in coordinates z.
-  If z_to_x is the map x = z_to_x(z).  Then J[F]_p in coordinates z is given by
-  J[F]_z = (F_z^k, ∂F_z^k/∂z^i, ∂²F_z^k/∂z^i∂z^j),
+  J[F]_p in coordinates z is given by J[F]_z = (F_z^k, ∂F_z^k/∂z^i, ∂²F_z^k/∂z^i∂z^j),
   where
-  F_z^k = F_x^k ∘ z_to_x,
+  F_z^k = F_x^k is unchanged,
   ∂F_z^k/∂z^i = (∂F_x^k/∂x^j) · (∂x^j/∂z^i),
   ∂²F_z^k/∂z^i∂z^j = (∂F_x^k/∂x^l) · (∂²x^l/∂z^i∂z^j) + (∂²F_x^k/∂x^l∂x^m) · (∂x^l/∂z^i) · (∂x^m/∂z^j),
   for i,j = 1,…,d and k = 1,…,n.

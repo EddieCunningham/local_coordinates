@@ -5,9 +5,11 @@ import jax.tree_util as jtu
 from jax import random
 import equinox as eqx
 from jaxtyping import Array, Float, PRNGKeyArray
-from linsdex import AbstractBatchableObject
+from linsdex import AbstractBatchableObject, auto_vmap
+from functools import partial
 from plum import dispatch
 from local_coordinates.jet import Jet, jet_decorator
+import warnings
 
 class BasisVectors(AbstractBatchableObject):
   """
@@ -33,12 +35,23 @@ class BasisVectors(AbstractBatchableObject):
     else:
       raise ValueError(f"Invalid number of dimensions: {self.p.ndim}")
 
-  # Note: explicit dual/primal conversion helpers have been removed.
-
 @dispatch
 def get_basis_transform(from_basis: BasisVectors, to_basis: BasisVectors) -> Jet:
   """
   Get the transformation matrix from one set of basis vectors to another.
+
+  from_basis = (E_1, \dots, E_n) where E_j = E_j^i d/dx^i
+  to_basis = (B_1, \dots, B_n) where B_j = B_j^i d/dx^i
+
+  Suppose we have a vector V = V^j E_j = W^i B_i.  This function returns
+  the linear map T_i^j that satisfies W^i = T_i^j V^j.
+
+  V = V^j E_j = V^j E_j^i d/dx^i
+  W = W^k B_k = W^k B_k^i d/dx^i
+
+  This gives us W^k = (B^{-1})^k_i E^i_j V^j which implies
+
+  --> T_j^k = (B^{-1})^k_i E^i_j
   """
   assert isinstance(from_basis, BasisVectors), f"from_basis must be a BasisVectors, got {type(from_basis)}"
 
@@ -46,12 +59,35 @@ def get_basis_transform(from_basis: BasisVectors, to_basis: BasisVectors) -> Jet
   def get_components(from_components, to_components) -> Array:
     return jnp.linalg.solve(to_components, from_components)
 
-  from_components_val = from_basis.components.get_value_jet()
-  to_components_val = to_basis.components.get_value_jet()
-  new_components = get_components(
+  from_components_val: Jet = from_basis.components.get_value_jet()
+  to_components_val: Jet = to_basis.components.get_value_jet()
+  new_components: Jet = get_components(
     from_components_val,
     to_components_val
   )
+  return new_components
+
+def apply_covariant_transform(T: Jet, old_basis_components: Jet) -> Jet:
+  """
+  Apply a covariant transform to a set of components.
+  """
+  @jet_decorator
+  def apply_transform(T_val: Array, x_components: Array) -> Array:
+    inv_T = jnp.linalg.inv(T_val)
+    return jnp.einsum("...i,ij->...j", x_components, inv_T)
+
+  new_basis_components: Jet = apply_transform(T.get_value_jet(), old_basis_components.get_value_jet())
+  return new_basis_components
+
+def apply_contravariant_transform(T: Jet, old_components: Jet) -> Jet:
+  """
+  Apply a contravariant transform to a set of components.
+  """
+  @jet_decorator
+  def apply_transform(T_val: Array, x_components: Array) -> Array:
+    return jnp.einsum("ij,...j->...i", T_val, x_components)
+
+  new_components: Jet = apply_transform(T.get_value_jet(), old_components.get_value_jet())
   return new_components
 
 @dispatch
@@ -91,17 +127,13 @@ def change_coordinates(basis: BasisVectors, x_to_z: Callable[[Array], Array], x:
   """
   Change the coordinates of a basis vectors from one set of coordinates to another.
   """
-  components: Jet = basis.components
-
-  # Construct a Jet with the component values as gradients
-  j = Jet(value=basis.p, gradient=components.value, hessian=components.gradient)
-
-  # Change coordinates
-  j_new: Jet = change_coordinates(j, x_to_z, x)
-
-  # Construct a new BasisVectors with the new coordinates
-  new_basis: BasisVectors = BasisVectors(p=x_to_z(x), components=j_new.get_gradient_jet())
-  return new_basis
+  if basis.components.hessian is not None:
+    warnings.warn("The Hessian transform is not implemented for change_coordinates of BasisVectors.")
+  x_jet = Jet(value=x, gradient=basis.components.value, hessian=basis.components.gradient)
+  z_jet: Jet = change_coordinates(x_jet, x_to_z, x)
+  z = x_to_z(x)
+  z_components = Jet(value=z_jet.gradient, gradient=z_jet.hessian, hessian=None)
+  return BasisVectors(p=z, components=z_components)
 
 def make_coordinate_basis(basis: BasisVectors) -> BasisVectors:
   """
