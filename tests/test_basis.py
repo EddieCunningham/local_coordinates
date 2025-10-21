@@ -1,5 +1,5 @@
 import jax.numpy as jnp
-from local_coordinates.basis import BasisVectors, change_basis, get_basis_transform, get_dual_basis_transform, make_coordinate_basis, get_standard_basis, get_standard_dual_basis, change_coordinates, apply_covariant_transform, apply_contravariant_transform
+from local_coordinates.basis import BasisVectors, change_basis, get_basis_transform, get_dual_basis_transform, get_standard_basis, get_standard_dual_basis, change_coordinates, apply_covariant_transform, apply_contravariant_transform
 from local_coordinates.jet import Jet, function_to_jet, jet_decorator, get_identity_jet
 import pytest
 import jax
@@ -111,68 +111,6 @@ def test_get_coordinate_transform_skewed():
   expected_transform = jnp.linalg.inv(b2)
 
   assert jnp.allclose(transform.value, expected_transform)
-
-def test_make_coordinate_basis_is_idempotent_on_coordinate_basis():
-  """
-  Tests that make_coordinate_basis does not change a basis that is already
-  a coordinate basis. It uses a polar coordinate chart as an example.
-  """
-  # Define polar coordinates chart: (r, θ) -> (x, y)
-  def chart(u):
-    r, theta = u
-    return jnp.array([r * jnp.cos(theta), r * jnp.sin(theta)])
-
-  # Point in parameter space
-  u = jnp.array([2.0, jnp.pi / 4])
-
-  # Use JAX to get the point, basis vectors (Jacobian), and their derivatives (Hessian)
-  p = chart(u)
-  basis_vectors = jax.jacfwd(chart)(u)
-  second_derivatives = jax.jacfwd(jax.jacrev(chart))(u)
-
-  # Create the BasisVectors object. By construction, this is a coordinate basis.
-  components_jet = Jet(value=basis_vectors, gradient=second_derivatives, hessian=None)
-  coord_basis = BasisVectors(p=p, components=components_jet)
-
-  # Apply the function
-  new_basis = make_coordinate_basis(coord_basis)
-
-  # The second derivatives should be unchanged (up to float precision)
-  assert jnp.allclose(coord_basis.components.gradient, new_basis.components.gradient)
-  # The point and basis vectors should also be unchanged
-  assert jnp.allclose(coord_basis.p, new_basis.p)
-  assert jnp.allclose(coord_basis.components.value, new_basis.components.value)
-
-
-def test_make_coordinate_basis_symmetrizes():
-  """
-  Tests that the function correctly symmetrizes the derivatives of a
-  non-commuting frame.
-  """
-  p = jnp.array([0., 0.])
-  frame = jnp.eye(2)
-
-  # Create a non-symmetric derivative tensor
-  # d(E_j)^i / dx^r
-  dframe_dx = jnp.zeros((2, 2, 2))
-  dframe_dx = dframe_dx.at[0, 1, 0].set(1.0)  # ∂(E_1)^0/∂x^0 = 1
-
-  # This corresponds to ∂E_1/∂z^0 != ∂E_0/∂z^1, so it's not a coordinate basis
-  components_jet = Jet(value=frame, gradient=dframe_dx, hessian=None)
-  non_coord_basis = BasisVectors(p=p, components=components_jet)
-
-  # Apply the function
-  new_basis = make_coordinate_basis(non_coord_basis)
-
-  # Check that the new derivatives are symmetric in the frame's own basis
-  dframe_dx_new = new_basis.components.gradient
-  frame_new = new_basis.components.value # This is unchanged
-
-  # d(E_j)^i / dz^k = ∑_r (d(E_j)^i / dx^r) * (E_k)^r
-  dframe_dz_new = jnp.einsum('ijr,rk->ijk', dframe_dx_new, frame_new)
-
-  # Assert that d(E_j)/dz^k is symmetric in j and k
-  assert jnp.allclose(dframe_dz_new, jnp.swapaxes(dframe_dz_new, 1, 2))
 
 def test_get_basis_transform_with_derivatives():
   """

@@ -7,7 +7,7 @@ import pytest
 import matplotlib.pyplot as plt
 
 from local_coordinates.jet import Jet
-from local_coordinates.basis import BasisVectors, make_coordinate_basis
+from local_coordinates.basis import BasisVectors
 from local_coordinates.plot_basis import plot_coordinate_grid
 
 
@@ -76,27 +76,3 @@ def test_plot_coordinate_grid_random_basis(tmp_path):
   assert os.path.getsize(savepath) > 0
   plt.close(fig)
 
-
-def test_plot_coordinate_grid_random_basis_after_make_coordinate_basis(tmp_path):
-  key = jax.random.PRNGKey(42)
-  p = jax.random.normal(key, (2,))
-  frame = _random_invertible_frame_2x2(jax.random.split(key)[0])
-  H = jax.random.normal(jax.random.split(key)[1], (2, 2, 2))
-
-  components_jet = Jet(value=frame, gradient=H, hessian=None)
-  basis = BasisVectors(p=p, components=components_jet)
-
-  basis_coord = make_coordinate_basis(basis)
-  # Invariants: same point and frame
-  assert jnp.allclose(basis_coord.p, basis.p)
-  assert jnp.allclose(basis_coord.components.value, basis.components.value)
-  # Hessian should be symmetric in the last two axes
-  Hc = basis_coord.components.gradient
-  assert jnp.allclose(Hc, jnp.swapaxes(Hc, -2, -1))
-
-  savepath = tmp_path / 'grid_random_coord.png'
-  fig, ax = plot_coordinate_grid(basis_coord, num=7, span=1.0, savepath=str(savepath), title='random_coord')
-
-  assert os.path.exists(savepath)
-  assert os.path.getsize(savepath) > 0
-  plt.close(fig)
