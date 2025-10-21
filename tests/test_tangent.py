@@ -209,7 +209,7 @@ def test_lie_bracket_change_of_basis_invariance():
   p = jnp.array([0.2, 0.1, -0.4])
 
   key = random.key(7)
-  k1, k2, kx, ky = random.split(key, 4)
+  k1, k2, k3, kx, ky = random.split(key, 5)
 
   # Basis 1: standard for simplicity
   basis1 = get_standard_basis(p)
@@ -217,7 +217,8 @@ def test_lie_bracket_change_of_basis_invariance():
   # Basis 2: random with derivatives
   vals = random.normal(k1, (N, N))
   grads = random.normal(k2, (N, N, N))
-  basis2 = BasisVectors(p=p, components=Jet(value=vals, gradient=grads, hessian=None))
+  hessians = random.normal(k3, (N, N, N, N))
+  basis2 = BasisVectors(p=p, components=Jet(value=vals, gradient=grads, hessian=hessians))
 
   # Vector fields X, Y with nontrivial values and gradients
   X = TangentVector(
@@ -226,7 +227,7 @@ def test_lie_bracket_change_of_basis_invariance():
     components=Jet(
       value=random.normal(kx, (N,)),
       gradient=random.normal(kx, (N, N)),
-      hessian=None,
+      hessian=random.normal(kx, (N, N, N)),
     ),
   )
   Y = TangentVector(
@@ -235,20 +236,20 @@ def test_lie_bracket_change_of_basis_invariance():
     components=Jet(
       value=random.normal(ky, (N,)),
       gradient=random.normal(ky, (N, N)),
-      hessian=None,
+      hessian=random.normal(ky, (N, N, N)),
     ),
   )
 
   # Bracket in basis 1, then move to basis 2
   bracket1 = lie_bracket(X, Y)
-  bracket1_in_2 = change_basis(bracket1, basis2)
+  bracket1_in_basis2 = change_basis(bracket1, basis2)
 
   # Transform X, Y to basis 2 first, then bracket
   X2 = change_basis(X, basis2)
   Y2 = change_basis(Y, basis2)
   bracket2 = lie_bracket(X2, Y2)
 
-  assert tangent_vectors_are_equivalent(bracket1_in_2, bracket2)
+  assert tangent_vectors_are_equivalent(bracket1_in_basis2, bracket2)
 
 def spherical_to_cartesian(q_in):
     q_in = jnp.asarray(q_in)
