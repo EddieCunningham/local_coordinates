@@ -5,7 +5,7 @@ import pytest
 
 from local_coordinates.jet import Jet, jet_decorator, function_to_jet, get_identity_jet
 from local_coordinates.basis import BasisVectors, get_basis_transform, get_standard_basis, apply_contravariant_transform
-from local_coordinates.tangent import TangentVector, change_basis
+from local_coordinates.tangent import TangentVector, change_basis, lie_bracket, tangent_vectors_are_equivalent
 
 
 def test_tangent_vector_creation_fields():
@@ -149,4 +149,103 @@ def test_call_invariant_under_basis_change():
   assert jnp.allclose(out_from.gradient, out_to.gradient)
   assert jnp.allclose(out_from.hessian, out_to.hessian)
 
-  import pdb; pdb.set_trace()
+
+def test_lie_bracket_zero_for_constant_vectors():
+  p = jnp.array([0.0, 0.0])
+  basis = get_standard_basis(p)
+
+  X = TangentVector(
+    p=p,
+    basis=basis,
+    components=Jet(value=jnp.array([1.0, 0.0]), gradient=jnp.zeros((2, 2)), hessian=None),
+  )
+  Y = TangentVector(
+    p=p,
+    basis=basis,
+    components=Jet(value=jnp.array([0.0, 1.0]), gradient=jnp.zeros((2, 2)), hessian=None),
+  )
+
+  bracket = lie_bracket(X, Y)
+
+  assert jnp.allclose(bracket.components.value, jnp.zeros(2))
+  assert jnp.allclose(bracket.components.gradient, 0.0)
+
+
+def test_lie_bracket_simple_noncommuting_vectors():
+  # In R^2 with coordinates (x, y), take X = (1, 0), Y = (x, 1).
+  # Expected [X, Y] = (1, 0) in standard convention.
+  p = jnp.array([0.3, -0.2])
+  basis = get_standard_basis(p)
+
+  X = TangentVector(
+    p=p,
+    basis=basis,
+    components=Jet(value=jnp.array([1.0, 0.0]), gradient=jnp.zeros((2, 2)), hessian=None),
+  )
+
+  Y_val = jnp.array([p[0], 1.0])
+  # dY/dx = (1, 0), dY/dy = (0, 0); last axis indexes coordinates (x, y)
+  dYdx = jnp.array([1.0, 0.0])
+  dYdy = jnp.array([0.0, 0.0])
+  Y_grad = jnp.stack([dYdx, dYdy], axis=-1)
+  Y = TangentVector(
+    p=p,
+    basis=basis,
+    components=Jet(value=Y_val, gradient=Y_grad, hessian=None),
+  )
+
+  bracket = lie_bracket(X, Y)
+
+  expected = jnp.array([1.0, 0.0])
+  # Value should match the standard definition of the Lie bracket
+  assert jnp.allclose(bracket.components.value, expected)
+  # Gradient is zero since expected is constant w.r.t. coordinates in this setup
+  assert jnp.allclose(bracket.components.gradient, 0.0)
+
+
+def test_lie_bracket_change_of_basis_invariance():
+  # Build two bases at the same point; compute bracket in either basis and compare.
+  N = 3
+  p = jnp.array([0.2, 0.1, -0.4])
+
+  key = random.key(7)
+  k1, k2, kx, ky = random.split(key, 4)
+
+  # Basis 1: standard for simplicity
+  basis1 = get_standard_basis(p)
+
+  # Basis 2: random with derivatives
+  vals = random.normal(k1, (N, N))
+  grads = random.normal(k2, (N, N, N))
+  basis2 = BasisVectors(p=p, components=Jet(value=vals, gradient=grads, hessian=None))
+
+  # Vector fields X, Y with nontrivial values and gradients
+  X = TangentVector(
+    p=p,
+    basis=basis1,
+    components=Jet(
+      value=random.normal(kx, (N,)),
+      gradient=random.normal(kx, (N, N)),
+      hessian=None,
+    ),
+  )
+  Y = TangentVector(
+    p=p,
+    basis=basis1,
+    components=Jet(
+      value=random.normal(ky, (N,)),
+      gradient=random.normal(ky, (N, N)),
+      hessian=None,
+    ),
+  )
+
+  # Bracket in basis 1, then move to basis 2
+  bracket1 = lie_bracket(X, Y)
+  bracket1_in_2 = change_basis(bracket1, basis2)
+
+  # Transform X, Y to basis 2 first, then bracket
+  X2 = change_basis(X, basis2)
+  Y2 = change_basis(Y, basis2)
+  bracket2 = lie_bracket(X2, Y2)
+
+  assert tangent_vectors_are_equivalent(bracket1_in_2, bracket2)

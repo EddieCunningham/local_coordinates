@@ -61,3 +61,39 @@ def change_basis(vector: TangentVector, new_basis: BasisVectors) -> TangentVecto
   # Apply the contravariant transform to the vector components
   new_components = apply_contravariant_transform(T, vector.components)
   return TangentVector(p=vector.p, components=new_components, basis=new_basis)
+
+
+def lie_bracket(X: TangentVector, Y: TangentVector) -> TangentVector:
+  """
+  Compute the Lie bracket of two tangent vectors.
+  """
+  assert X.batch_size is None and Y.batch_size is None, "Use vmap to compute the Lie bracket of batched tangent vectors"
+  standard_basis: BasisVectors = get_standard_basis(X.p)
+
+  # Go to the standard basis
+  X_standard: TangentVector = change_basis(X, standard_basis)
+  Y_standard: TangentVector = change_basis(Y, standard_basis)
+
+  @jet_decorator
+  def get_components(
+    X_val: Float[Array, "N"],
+    Y_val: Float[Array, "N"],
+    X_grad: Float[Array, "N N"],
+    Y_grad: Float[Array, "N N"]
+  ) -> Float[Array, "N"]:
+    return Y_grad@X_val - X_grad@Y_val
+
+  X_val = X_standard.components.get_value_jet()
+  Y_val = Y_standard.components.get_value_jet()
+  X_grad = X_standard.components.get_gradient_jet()
+  Y_grad = Y_standard.components.get_gradient_jet()
+  components: Jet = get_components(X_val, Y_val, X_grad, Y_grad)
+  return TangentVector(X.p, components, standard_basis)
+
+def tangent_vectors_are_equivalent(a: TangentVector, b: TangentVector) -> bool:
+  """
+  Check if two tangent vectors are equal up to a change of basis.
+  """
+  a_standard: TangentVector = a.to_standard_basis()
+  b_standard: TangentVector = b.to_standard_basis()
+  return jnp.allclose(a_standard.components.value, b_standard.components.value) and jnp.allclose(a_standard.components.gradient, b_standard.components.gradient)
