@@ -5,7 +5,7 @@ import pytest
 
 from local_coordinates.jet import Jet, jet_decorator, function_to_jet, get_identity_jet
 from local_coordinates.basis import BasisVectors, get_basis_transform, get_standard_basis, apply_contravariant_transform
-from local_coordinates.tangent import TangentVector, change_basis, lie_bracket, tangent_vectors_are_equivalent
+from local_coordinates.tangent import TangentVector, change_basis, lie_bracket, tangent_vectors_are_equivalent, pushforward
 
 
 def test_tangent_vector_creation_fields():
@@ -249,3 +249,61 @@ def test_lie_bracket_change_of_basis_invariance():
   bracket2 = lie_bracket(X2, Y2)
 
   assert tangent_vectors_are_equivalent(bracket1_in_2, bracket2)
+
+def spherical_to_cartesian(q_in):
+    q_in = jnp.asarray(q_in)
+    N = q_in.shape[0]
+    r = q_in[0]
+    phis = q_in[1:]
+
+    def prod_sin(k):
+        return jnp.prod(jnp.sin(phis[:k])) if k > 0 else 1.0
+
+    coords = []
+    for i in range(N):
+        base = r * prod_sin(i)
+        if i < N - 1:
+            coords.append(base * jnp.cos(phis[i]))
+        else:
+            coords.append(base)
+    return jnp.stack(coords)
+
+def cartesian_to_spherical(x_in):
+  x_in = jnp.asarray(x_in)
+  N = x_in.shape[0]
+  r = jnp.linalg.norm(x_in)
+  phis = []
+  for i in range(N - 1):
+    if i < N - 2:
+      phi = jnp.arctan2(jnp.linalg.norm(x_in[i+1:]), x_in[i])
+    else:
+      # Last angle
+      phi = jnp.arctan2(x_in[-1], x_in[-2])
+    phis.append(phi)
+  return jnp.concatenate([jnp.array([r], dtype=x_in.dtype), jnp.stack(phis)])
+
+def test_tangent_pushforward():
+  # Choose a non-degenerate spherical point
+  q = jnp.array([1.7, 0.4, -0.3])
+
+  # Build a tangent vector at q in the standard (coordinate) basis
+  V = jnp.array([0.9, -1.2, 0.7])
+  key = random.key(0)
+  k1, k2 = random.split(key)
+  V_grad = random.normal(k1, (3, 3))
+  V_hess = random.normal(k2, (3, 3, 3))
+  V_jet = Jet(value=V, gradient=V_grad, hessian=V_hess)
+  basis_q = get_standard_basis(q)
+  X = TangentVector(p=q, components=V_jet, basis=basis_q)
+
+  # Pushforward through spherical_to_cartesian
+  Y = pushforward(X, spherical_to_cartesian)
+
+  # Expected: apply the Jacobian J = d x / d q at q to vector components V
+  J = jax.jacrev(spherical_to_cartesian)(q)
+  expected = J @ V
+  x = spherical_to_cartesian(q)
+
+  assert jnp.allclose(Y.components.value, expected)
+  assert jnp.allclose(Y.p, x)
+  # Derivative propagation behavior is implementation-defined; value and base point must be correct.

@@ -7,7 +7,7 @@ import equinox as eqx
 from jaxtyping import Array, Float, PRNGKeyArray
 from linsdex import AbstractBatchableObject
 from plum import dispatch
-from local_coordinates.jet import Jet, jet_decorator
+from local_coordinates.jet import Jet, jet_decorator, function_to_jet
 from local_coordinates.basis import BasisVectors, get_basis_transform, get_standard_basis, apply_contravariant_transform
 
 class TangentVector(AbstractBatchableObject):
@@ -62,6 +62,22 @@ def change_basis(vector: TangentVector, new_basis: BasisVectors) -> TangentVecto
   new_components = apply_contravariant_transform(T, vector.components)
   return TangentVector(p=vector.p, components=new_components, basis=new_basis)
 
+def pushforward(X: TangentVector, f: Callable) -> TangentVector:
+  """
+  Pushforward a tangent vector through a smooth map.
+  """
+  assert X.batch_size is None, "TangentVector must be unbatched to be pushed forward"
+
+  X_standard: TangentVector = X.to_standard_basis()
+  f_jet: Jet = function_to_jet(f, X.p)
+
+  @jet_decorator
+  def pushforward_components(X_val: Array, f_grad: Array) -> Array:
+    return jnp.einsum("i,...i->...", X_val, f_grad)
+
+  fX_components: Jet = pushforward_components(X_standard.components.get_value_jet(), f_jet.get_gradient_jet())
+
+  return TangentVector(f_jet.value, fX_components, X_standard.basis)
 
 def lie_bracket(X: TangentVector, Y: TangentVector) -> TangentVector:
   """
@@ -96,4 +112,4 @@ def tangent_vectors_are_equivalent(a: TangentVector, b: TangentVector) -> bool:
   """
   a_standard: TangentVector = a.to_standard_basis()
   b_standard: TangentVector = b.to_standard_basis()
-  return jnp.allclose(a_standard.components.value, b_standard.components.value) and jnp.allclose(a_standard.components.gradient, b_standard.components.gradient)
+  return jnp.allclose(a_standard.components.value, b_standard.components.value) and jnp.allclose(a_standard.components.gradient, b_standard.components.gradient) and jnp.allclose(a_standard.components.hessian, b_standard.components.hessian)

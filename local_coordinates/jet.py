@@ -700,6 +700,7 @@ def change_coordinates(
   d2Fpdx2 = jet.hessian
 
   dzdx = jax.jacrev(x_to_z)(x)
+  assert dzdx.shape == (x.shape[0], x.shape[0]), "dzdx should be a square matrix"
   d2zdx2 = jax.jacfwd(jax.jacrev(x_to_z))(x)
   dxdz = jnp.linalg.inv(dzdx)
 
