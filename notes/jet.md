@@ -65,3 +65,27 @@ $$
 &= \frac{\partial F_p^b}{\partial x^j}\frac{\partial^2 T^k}{\partial F^b \partial F^a} \frac{\partial F_p^a}{\partial x^i} + \frac{\partial T^k}{\partial F^a} \frac{\partial^2 F_p^a}{\partial x^i \partial x^j}
 \end{align}
 $$
+
+
+## Note about the pushforward of a vector field Jet through a smooth map
+Consider a tangent vector field Jet at $x$ with components $(X^i, \frac{\partial X^i}{\partial x^j}, \frac{\partial^2 X^i}{\partial x^j \partial x^k})$ and a smooth map $f: x \mapsto y$. The pushforward $f_*$ is how we can move one tangent vector from the domain of $f$ to its codomain and can be expressed in coordinates as
+$$
+\begin{align}
+  f_*X^i = \frac{\partial f^i}{\partial x^j} X^j
+\end{align}
+$$
+Ideally, we would like to push the full tangent vector Jet through $f$.  If $Y = f_*X$ and $(\frac{\partial}{\partial y^1}, \dots, \frac{\partial}{\partial y^n})$ is a local coordinate system around $y=f(x)$.  Then we would like the pushed Jet to represent
+$$
+\begin{align}
+  (Y^i, \frac{\partial Y^i}{\partial y^j}, \frac{\partial^2 Y^i}{\partial y^j \partial y^k})
+\end{align}
+$$
+However, this is not always enough information to determine this pushed Jet.  Using the chain rule, we can compute the Jet
+$$
+\begin{align}
+  (Y^i, \frac{\partial Y^i}{\partial x^j}, \frac{\partial^2 Y^i}{\partial x^j \partial x^k})
+\end{align}
+$$
+In order to transform the Jet from $x$-coordinates to $y$-coordinates, we would use the chain rule $\frac{\partial Y^i}{\partial y^j} = \frac{\partial x^k}{\partial y^j} \frac{\partial Y^i}{\partial x^k}$, but this would involve knowing the inverse of the Jacobian of $f$.  In general, this is not possible to do because the pushforward is defined for general smooth maps, not just for diffeomorphisms.
+
+

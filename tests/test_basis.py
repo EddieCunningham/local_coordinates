@@ -350,9 +350,10 @@ def test_change_coordinates():
 def test_change_coordinates_round_trip():
   q = jnp.array([1.0, jnp.pi / 4, jnp.pi / 6])
   x = spherical_to_cartesian(q)
-  value = random.normal(random.key(0), (3, 3))
-  gradient = random.normal(random.key(0), (3, 3, 3))
-  hessian = None
+  k1, k2, k3 = random.split(random.key(0), 3)
+  value = random.normal(k1, (3, 3))
+  gradient = random.normal(k2, (3, 3, 3))
+  hessian = random.normal(k3, (3, 3, 3, 3))
   basis = BasisVectors(p=q, components=Jet(value=value, gradient=gradient, hessian=hessian, dim=3))
   out: BasisVectors = change_coordinates(basis, spherical_to_cartesian, q)
   out2: BasisVectors = change_coordinates(out, cartesian_to_spherical, x)

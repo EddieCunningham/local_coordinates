@@ -283,9 +283,53 @@ def cartesian_to_spherical(x_in):
     phis.append(phi)
   return jnp.concatenate([jnp.array([r], dtype=x_in.dtype), jnp.stack(phis)])
 
-def test_tangent_pushforward():
+@pytest.mark.xfail(reason="Pushforward jet w.r.t. y-coordinates not possible in general")
+def test_tangent_pushforward_definition():
+  """
+  dF(X)(f) = X(f\circ F)
+  """
   # Choose a non-degenerate spherical point
   q = jnp.array([1.7, 0.4, -0.3])
+  F = spherical_to_cartesian
+  p = F(q)
+
+  def f(x):
+    return jnp.array([
+      x[0]**2 + 3.0 * x[1] - 0.7 * x[2],
+      jnp.sin(x[0]) + x[1]**3 + x[2],
+    ])
+
+  f_jet = function_to_jet(f, p)
+
+  def f_circ_F(q):
+    return f(F(q))
+
+  f_circ_F_jet = function_to_jet(f_circ_F, q)
+
+  # Build a tangent vector at q in the standard (coordinate) basis
+  key = random.key(0)
+  k1, k2, k3 = random.split(key, 3)
+  V_val = random.normal(k1, (3,))
+  V_grad = random.normal(k2, (3, 3))
+  V_hess = random.normal(k3, (3, 3, 3))
+  V_jet = Jet(value=V_val, gradient=V_grad, hessian=V_hess)
+  basis_q = get_standard_basis(q)
+  X = TangentVector(p=q, components=V_jet, basis=basis_q)
+
+  dF_X: TangentVector = pushforward(X, F)
+
+  out1 = dF_X(f_jet)
+  out2 = X(f_circ_F_jet)
+
+  assert jnp.allclose(out1.value, out2.value)
+  assert jnp.allclose(out1.gradient, out2.gradient)
+  assert jnp.allclose(out1.hessian, out2.hessian)
+
+@pytest.mark.xfail(reason="Pushforward jet w.r.t. y-coordinates not possible in general")
+def test_pushforward_round_trip_restores_components():
+  # Choose a non-degenerate spherical point
+  q = jnp.array([1.7, 0.4, -0.3])
+  p = spherical_to_cartesian(q)
 
   # Build a tangent vector at q in the standard (coordinate) basis
   V = jnp.array([0.9, -1.2, 0.7])
@@ -297,14 +341,52 @@ def test_tangent_pushforward():
   basis_q = get_standard_basis(q)
   X = TangentVector(p=q, components=V_jet, basis=basis_q)
 
-  # Pushforward through spherical_to_cartesian
-  Y = pushforward(X, spherical_to_cartesian)
+  f_jet: Jet = function_to_jet(spherical_to_cartesian, q) # f, df/dx, d²f/dx²
+  f_inv_jet: Jet = function_to_jet(cartesian_to_spherical, p) # f, df/dx, d²f/dx²
 
-  # Expected: apply the Jacobian J = d x / d q at q to vector components V
-  J = jax.jacrev(spherical_to_cartesian)(q)
-  expected = J @ V
+
+  blah1 = apply_contravariant_transform(f_jet.get_gradient_jet(), X.components)
+  blah2 = apply_contravariant_transform(f_inv_jet.get_gradient_jet(), blah1)
+
+  Y = pushforward(X, spherical_to_cartesian)
+  X2 = pushforward(Y, cartesian_to_spherical)
+  assert tangent_vectors_are_equivalent(X, X2)
+  assert jnp.allclose(X2.components.value, X.components.value)
+  assert jnp.allclose(X2.components.gradient, X.components.gradient)
+  assert jnp.allclose(X2.components.hessian, X.components.hessian)
+
+@pytest.mark.xfail(reason="Pushforward jet w.r.t. y-coordinates not possible in general")
+def test_tangent_pushforward_does_not_affect_lie_bracket():
+  # Choose a non-degenerate spherical point
+  q = jnp.array([1.7, 0.4, -0.3])
+  basis_q = get_standard_basis(q)
   x = spherical_to_cartesian(q)
 
-  assert jnp.allclose(Y.components.value, expected)
-  assert jnp.allclose(Y.p, x)
-  # Derivative propagation behavior is implementation-defined; value and base point must be correct.
+  # Build a tangent vector at q in the standard (coordinate) basis
+  key = random.key(0)
+  k1, k2, k3 = random.split(key, 3)
+  X_val, Y_val = random.normal(k1, (2, 3))
+  X_grad, Y_grad = random.normal(k2, (2, 3, 3))
+  X_hess, Y_hess = random.normal(k3, (2, 3, 3, 3))
+  X_jet = Jet(value=X_val, gradient=X_grad, hessian=X_hess)
+  Y_jet = Jet(value=Y_val, gradient=Y_grad, hessian=Y_hess)
+  X = TangentVector(p=q, components=X_jet, basis=basis_q)
+  Y = TangentVector(p=q, components=Y_jet, basis=basis_q)
+
+  # [F_*X, F_*Y]
+  F_X = pushforward(X, spherical_to_cartesian)
+  F_Y = pushforward(Y, spherical_to_cartesian)
+  F_bracket = lie_bracket(F_X, F_Y)
+
+  # F_*[X, Y]
+  bracket = lie_bracket(X, Y)
+  F_bracket2 = pushforward(bracket, spherical_to_cartesian)
+
+  F_bracket_standard = change_basis(F_bracket, get_standard_basis(x))
+  F_bracket2_standard = change_basis(F_bracket2, get_standard_basis(x))
+  assert jnp.allclose(F_bracket_standard.components.value, F_bracket2_standard.components.value)
+  assert jnp.allclose(F_bracket_standard.components.gradient, F_bracket2_standard.components.gradient)
+  assert jnp.allclose(F_bracket_standard.components.hessian, F_bracket2_standard.components.hessian)
+
+
+  assert tangent_vectors_are_equivalent(F_bracket, F_bracket2)

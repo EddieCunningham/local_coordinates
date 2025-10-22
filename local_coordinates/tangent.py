@@ -7,7 +7,7 @@ import equinox as eqx
 from jaxtyping import Array, Float, PRNGKeyArray
 from linsdex import AbstractBatchableObject
 from plum import dispatch
-from local_coordinates.jet import Jet, jet_decorator, function_to_jet
+from local_coordinates.jet import Jet, jet_decorator, function_to_jet, change_coordinates
 from local_coordinates.basis import BasisVectors, get_basis_transform, get_standard_basis, apply_contravariant_transform
 
 class TangentVector(AbstractBatchableObject):
@@ -23,6 +23,7 @@ class TangentVector(AbstractBatchableObject):
     assert isinstance(self.components, Jet), "components must be a Jet"
     if self.components.ndim != self.p.ndim:
       raise ValueError(f"Invalid number of dimensions: {self.components.ndim}")
+    assert jnp.allclose(self.p, self.basis.p), "p and basis.p must be the same"
 
   @property
   def batch_size(self) -> Union[None,int,Tuple[int]]:
@@ -62,22 +63,25 @@ def change_basis(vector: TangentVector, new_basis: BasisVectors) -> TangentVecto
   new_components = apply_contravariant_transform(T, vector.components)
   return TangentVector(p=vector.p, components=new_components, basis=new_basis)
 
+@dispatch
 def pushforward(X: TangentVector, f: Callable) -> TangentVector:
   """
   Pushforward a tangent vector through a smooth map.
   """
+  raise NotImplementedError("It is not possible to pushforward tangent vectors whose components are Jets.")
   assert X.batch_size is None, "TangentVector must be unbatched to be pushed forward"
 
-  X_standard: TangentVector = X.to_standard_basis()
-  f_jet: Jet = function_to_jet(f, X.p)
+  X_standard: TangentVector = X.to_standard_basis() # X, dX/dx, d²X/dx²
+  f_jet: Jet = function_to_jet(f, X.p) # f, df/dx, d²f/dx²
+  T: Jet = f_jet.get_gradient_jet() # transformation of components
 
-  @jet_decorator
-  def pushforward_components(X_val: Array, f_grad: Array) -> Array:
-    return jnp.einsum("i,...i->...", X_val, f_grad)
+  # Apply the contravariant transform to the vector components
+  fX_components: Jet = apply_contravariant_transform(T, X_standard.components) # f(X), df(X)/dx, d²f(X)/dx²
+  # fX_components: Jet = change_coordinates(fX_components, f, X.p)
 
-  fX_components: Jet = pushforward_components(X_standard.components.get_value_jet(), f_jet.get_gradient_jet())
-
-  return TangentVector(f_jet.value, fX_components, X_standard.basis)
+  new_standard_basis: BasisVectors = get_standard_basis(f_jet.value)
+  # import pdb; pdb.set_trace()
+  return TangentVector(f_jet.value, fX_components, new_standard_basis)
 
 def lie_bracket(X: TangentVector, Y: TangentVector) -> TangentVector:
   """
@@ -112,4 +116,5 @@ def tangent_vectors_are_equivalent(a: TangentVector, b: TangentVector) -> bool:
   """
   a_standard: TangentVector = a.to_standard_basis()
   b_standard: TangentVector = b.to_standard_basis()
+  assert jnp.allclose(a_standard.p, b_standard.p)
   return jnp.allclose(a_standard.components.value, b_standard.components.value) and jnp.allclose(a_standard.components.gradient, b_standard.components.gradient) and jnp.allclose(a_standard.components.hessian, b_standard.components.hessian)
