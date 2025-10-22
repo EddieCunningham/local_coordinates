@@ -8,7 +8,9 @@ from jaxtyping import Array, Float, PRNGKeyArray
 from linsdex import AbstractBatchableObject
 from plum import dispatch
 from local_coordinates.jet import Jet, jet_decorator
-from local_coordinates.basis import BasisVectors, get_basis_transform, get_standard_basis
+from local_coordinates.basis import BasisVectors, get_basis_transform, get_standard_basis, apply_contravariant_transform
+from local_coordinates.tangent import TangentVector, lie_bracket
+from functools import partial
 
 class Frame(AbstractBatchableObject):
   """
@@ -23,12 +25,23 @@ class Frame(AbstractBatchableObject):
     assert isinstance(self.components, Jet), "components must be a Jet"
     if self.components.ndim != self.p.ndim + 1:
       raise ValueError(f"Invalid number of dimensions: {self.components.ndim}")
+    assert jnp.allclose(self.p, self.basis.p), "p and basis.p must be the same"
 
   @property
   def batch_size(self) -> Union[None,int,Tuple[int]]:
     return self.basis.batch_size
 
-  # DualFrame functionality removed
+  def get_basis_vector(self, i: int) -> TangentVector:
+    """
+    Get the i-th basis vector.
+    """
+    return TangentVector(p=self.p, components=self.components[i], basis=self.basis)
+
+  def to_standard_basis(self) -> 'Frame':
+    """
+    Transform the frame to the standard basis.
+    """
+    return change_basis(self, get_standard_basis(self.p))
 
 @dispatch
 def change_basis(frame: Frame, new_basis: BasisVectors) -> Frame:
@@ -38,44 +51,47 @@ def change_basis(frame: Frame, new_basis: BasisVectors) -> Frame:
   # Compute linear transform from the current basis to the new basis.
   T: Jet = get_basis_transform(frame.basis, new_basis)
 
-  # Apply full chain rule: differentiate through both T and the frame components.
-  @jet_decorator
-  def transform_components(T_in, components_in):
-    # Left-multiply by T (contravariant index transformation).
-    return jnp.einsum("...ij,...jk->...ik", T_in, components_in)
+  # Apply the contravariant transform to each of the frame components
+  new_components: Jet = eqx.filter_vmap(apply_contravariant_transform, in_axes=(None, 0))(T, frame.components)
 
-  new_components = transform_components(T, frame.components)
   return Frame(p=frame.p, components=new_components, basis=new_basis)
 
-def get_lie_bracket_components(frame: Frame) -> Jet:
+@dispatch
+def pushforward(frame: Frame, f: Callable) -> Frame:
   """
-  Get the components of the Lie bracket of the frame.  Returns
-  c_{ij}^k where [E_i, E_j] = c_{ij}^k E_k.
+  Pushforward a frame through a smooth map.
   """
-  standard_basis: BasisVectors = get_standard_basis(frame.p)
+  raise NotImplementedError("It is not possible to pushforward frames whose components are Jets.")
 
-  # Go to the standard basis
-  frame_standard: Frame = change_basis(frame, standard_basis)
-  standard_components: Jet = frame_standard.components
+  @eqx.filter_vmap
+  def pushforward_basis_vector_components(vector_components: Jet) -> TangentVector:
+    X = TangentVector(p=frame.p, components=vector_components, basis=frame.basis)
+    return pushforward(X, f)
 
-  @jet_decorator
-  def get_components(basis_vals: Array, basis_grads: Array) -> Array:
-    term1 = jnp.einsum("ai,kja->kij", basis_vals, basis_grads)
-    term2 = jnp.einsum("aj,kia->kij", basis_vals, basis_grads)
-    return term1 - term2
+  new_basis_vectors: Annotated[TangentVector, "D"] = pushforward_basis_vector_components(frame.components)
+  basis: BasisVectors = new_basis_vectors.basis[0]
+  return Frame(p=basis.p, components=new_basis_vectors.components, basis=basis)
 
-  basis_vals: Jet = standard_components.get_value_jet()
-  basis_grads: Jet = standard_components.get_gradient_jet()
-  components_euclidean: Jet = get_components(basis_vals, basis_grads)
+def get_lie_bracket_between_frame_pairs(frame: Frame) -> Annotated[TangentVector, "D D"]:
+  """
+  Returns a doubly batched TangentVector whose elements are a TangentVector
+  representing the Lie bracket between the i-th and j-th basis vectors.
+  """
 
-  # Convert to components in the same basis that we started with
-  T_jet: Annotated[Jet, "N D D"] = get_basis_transform(standard_basis, frame.basis)
+  @partial(eqx.filter_vmap, in_axes=(0, None))
+  @partial(eqx.filter_vmap, in_axes=(None, 0))
+  def get_lie_bracket(Ei_components: Jet, Ej_components: Jet) -> Jet:
+    Ei = TangentVector(p=frame.p, components=Ei_components, basis=frame.basis)
+    Ej = TangentVector(p=frame.p, components=Ej_components, basis=frame.basis)
+    return lie_bracket(Ei, Ej)
 
-  @jet_decorator
-  def transform_back(components_euclidean_vals: Array, T_val: Array) -> Array:
-    return jnp.einsum("ka,aij->kij", T_val, components_euclidean_vals)
-
-  out: Jet = transform_back(components_euclidean.get_value_jet(), T_jet.get_value_jet())
+  out: Annotated[TangentVector, "D D"] = get_lie_bracket(frame.components, frame.components)
   return out
 
-## DualFrame class and change_basis for DualFrame removed per deprecation
+def frames_are_equivalent(a: Frame, b: Frame) -> bool:
+  """
+  Check if two frames are equivalent up to a change of basis.
+  """
+  a_standard: Frame = a.to_standard_basis()
+  b_standard: Frame = b.to_standard_basis()
+  return jnp.allclose(a_standard.components.value, b_standard.components.value) and jnp.allclose(a_standard.components.gradient, b_standard.components.gradient) and jnp.allclose(a_standard.components.hessian, b_standard.components.hessian)
