@@ -1,6 +1,8 @@
 import jax.numpy as jnp
 import pytest
-from local_coordinates.metric import RiemannianMetric, change_basis
+from local_coordinates.metric import RiemannianMetric#, change_basis
+from local_coordinates.tensor import change_basis
+# from local_coordinates.tensor import change_basis
 from local_coordinates.basis import BasisVectors, get_dual_basis_transform
 from local_coordinates.jet import Jet
 

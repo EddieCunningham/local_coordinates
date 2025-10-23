@@ -148,7 +148,7 @@ def change_basis(tensor: Tensor, new_basis: BasisVectors) -> Tensor:
   k_input_indices = input_indices[:k]
   k_output_indices = output_indices[:k]
   for i in range(k):
-    transforms_str_parts.append(f"{k_output_indices[i]}{k_input_indices[i]}")
+    transforms_str_parts.append(f"{k_input_indices[i]}{k_output_indices[i]}")
     transforms.append(Tinv_value_jet)
 
   # Contravariant part (l) transforms with T

@@ -102,7 +102,7 @@ def get_dual_basis_transform(from_basis: BasisVectors, to_basis: BasisVectors) -
   """
   @jet_decorator
   def get_components(theta_from, theta_to) -> Array:
-    return theta_from @ jnp.linalg.inv(theta_to)
+    return jnp.linalg.solve(theta_from, theta_to)
 
   from_components_val = from_basis.components.get_value_jet()
   to_components_val = to_basis.components.get_value_jet()
