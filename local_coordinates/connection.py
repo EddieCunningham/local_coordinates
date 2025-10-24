@@ -7,14 +7,14 @@ import equinox as eqx
 from jaxtyping import Array, Float, PRNGKeyArray
 from linsdex import AbstractBatchableObject
 from local_coordinates.basis import BasisVectors, get_basis_transform, get_standard_basis
-from local_coordinates.frame import get_lie_bracket_components
 from plum import dispatch
 from local_coordinates.tensor import Tensor, change_basis
 from local_coordinates.jet import Jet
 from local_coordinates.jet import jet_decorator
 from local_coordinates.metric import RiemannianMetric
 from local_coordinates.jet import get_identity_jet
-from local_coordinates.frame import Frame
+from local_coordinates.frame import Frame, get_lie_bracket_between_frame_pairs
+from local_coordinates.tangent import TangentVector
 class Connection(AbstractBatchableObject):
   """
   A Connection is a map from one tangent space to another.
@@ -41,6 +41,7 @@ class Connection(AbstractBatchableObject):
     # Compute the covariant derivative
     @jet_decorator
     def components(gamma_val, x_val, y_val, y_grad_val) -> Array:
+      # X^i Y^k_{,i} + Gamma^k_{ij} X^i Y^j
       term1 = jnp.einsum("i,ki->k", x_val, y_grad_val)
       term2 = jnp.einsum("kij,i,j->k", gamma_val, x_val, y_val)
       return term1 + term2
@@ -77,7 +78,12 @@ def get_levi_civita_connection(metric: RiemannianMetric) -> Connection:
   basis: BasisVectors = metric.basis
 
   N = basis.p.shape[0]
-  c_kij: Jet = get_lie_bracket_components(Frame(p=basis.p, basis=basis, components=get_identity_jet(N)))
+  frame = Frame(p=basis.p, basis=basis, components=get_identity_jet(N))
+  lie_bracket_pairs: Annotated[TangentVector, "D D"] = get_lie_bracket_between_frame_pairs(frame)
+
+  ax = (0, None)
+  vmapped_change_basis = eqx.filter_vmap(eqx.filter_vmap(change_basis, in_axes=ax), in_axes=ax)
+  lie_bracket_pairs = vmapped_change_basis(lie_bracket_pairs, basis)
 
   # Get the metric components
   g_ijk: Jet = metric.components.get_gradient_jet()
@@ -103,12 +109,10 @@ def get_levi_civita_connection(metric: RiemannianMetric) -> Connection:
     t6 = jnp.einsum("kij->ijk", c_kij_lower)
 
     gamma_lower = 0.5 * (t1 + t2 - t3 + t4 - t5 - t6)
-
     gamma_upper = jnp.einsum("km,mij->kij", ginv, gamma_lower)
-
     return gamma_upper
 
-  c_kij_val = c_kij.get_value_jet()
+  c_kij_val = lie_bracket_pairs.components.get_value_jet()
   g_ij_val = metric.components.get_value_jet()
   g_ijk_grad = g_ijk.get_value_jet()
   christoffel_symbols: Jet = get_christoffel_symbols(c_kij_val, g_ij_val, g_ijk_grad)
