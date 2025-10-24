@@ -27,16 +27,13 @@ class Connection(AbstractBatchableObject):
     # Delegate batching to underlying basis
     return self.basis.batch_size
 
-  def covariant_derivative(self, X: Annotated[Tensor, "0 1"], Y: Annotated[Tensor, "0 1"]) -> Tensor:
-    """
-    TODO: Handle covariant derivatives of general tensors.
-    """
-
-    assert X.tensor_type.is_vector(), f"X must be a vector, got {X.tensor_type}"
+  def covariant_derivative(self, X: TangentVector, Y: TangentVector) -> TangentVector:
+    if not isinstance(X, TangentVector) or not isinstance(Y, TangentVector):
+      raise ValueError("Only supporting covariant derivative of tangent vectors")
 
     # Make sure X and Y are written in the same basis
-    X: Tensor = change_basis(X, self.basis)
-    Y: Tensor = change_basis(Y, self.basis)
+    X: TangentVector = change_basis(X, self.basis)
+    Y: TangentVector = change_basis(Y, self.basis)
 
     # Compute the covariant derivative
     @jet_decorator
@@ -51,7 +48,7 @@ class Connection(AbstractBatchableObject):
     y_value_jet = Y.components.get_value_jet()
     y_gradient_jet = Y.components.get_gradient_jet()
     new_components = components(gamma_value_jet, x_value_jet, y_value_jet, y_gradient_jet)
-    return Tensor(X.tensor_type, self.basis, new_components)
+    return TangentVector(X.p, new_components, self.basis)
 
 @dispatch
 def change_basis(connection: Connection, new_basis: BasisVectors) -> Connection:
@@ -62,15 +59,17 @@ def change_basis(connection: Connection, new_basis: BasisVectors) -> Connection:
   T_jet: Jet = get_basis_transform(connection.basis, new_basis)
 
   @jet_decorator
-  def get_components(christoffel_symbols_val, T_val, T_grad) -> Jet:
-    term1 = jnp.einsum("ai,cja,kc->kij", T_val, T_grad, T_val)
-    term2 = jnp.einsum("cab,ai,bj,kc->kij", christoffel_symbols_val, T_val, T_val, T_val)
+  def get_components(christoffel_symbols_val, E_tilde_val, T_val, T_grad) -> Jet:
+    T_val_inv = jnp.linalg.inv(T_val)
+    term1 = jnp.einsum("lj,ai,km,mal->kij", T_val, T_val_inv, T_val_inv, christoffel_symbols_val)
+    term2 = jnp.einsum("ai,mja,km->kij", E_tilde_val, T_grad, T_val_inv)
     return term1 + term2
 
   cs_value_jet = connection.christoffel_symbols.get_value_jet()
   T_value_jet = T_jet.get_value_jet()
   T_gradient_jet = T_jet.get_gradient_jet()
-  new_christoffel_symbols = get_components(cs_value_jet, T_value_jet, T_gradient_jet)
+  E_tilde_val_jet = new_basis.components.get_value_jet()
+  new_christoffel_symbols = get_components(cs_value_jet, E_tilde_val_jet, T_value_jet, T_gradient_jet)
   return Connection(basis=new_basis, christoffel_symbols=new_christoffel_symbols)
 
 def get_levi_civita_connection(metric: RiemannianMetric) -> Connection:

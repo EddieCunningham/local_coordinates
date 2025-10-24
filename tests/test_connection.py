@@ -1,9 +1,21 @@
 import jax.numpy as jnp
-from local_coordinates.basis import get_standard_basis
+from jax import random
+import numpy as np
+from local_coordinates.basis import BasisVectors, get_standard_basis, change_basis
 from local_coordinates.connection import Connection, get_levi_civita_connection
 from local_coordinates.jet import Jet
 from local_coordinates.metric import RiemannianMetric
 from local_coordinates.tensor import Tensor, TensorType
+from local_coordinates.tangent import TangentVector
+
+
+def create_random_basis(key: random.PRNGKey, dim: int) -> BasisVectors:
+  p_key, vals_key, grads_key, hessians_key = random.split(key, 4)
+  p = random.normal(p_key, (dim,))
+  vals = random.normal(vals_key, (dim, dim))
+  grads = random.normal(grads_key, (dim, dim, dim))
+  hessians = random.normal(hessians_key, (dim, dim, dim, dim))
+  return BasisVectors(p=p, components=Jet(value=vals, gradient=grads, hessian=hessians))
 
 
 def test_connection_basic_construction():
@@ -183,15 +195,14 @@ def test_covariant_derivative_zero_connection_matches_directional_derivative():
   # X components (vector)
   X_val = jnp.array([1.2, -0.7])
   X = Jet(value=X_val, gradient=None, hessian=None, dim=2)
-  vec = TensorType(1, 0)
-  X_tensor = Tensor(tensor_type=vec, basis=basis, components=X)
+  X_tensor = TangentVector(p=p, basis=basis, components=X)
 
   # Y components and gradient (∂_i Y^k)
   Y_val = jnp.array([2.0, -3.0])
   Y_grad = jnp.array([[0.5, 1.0],   # ∂_x Y^x, ∂_y Y^x
                       [2.0, 0.25]]) # ∂_x Y^y, ∂_y Y^y
   Y = Jet(value=Y_val, gradient=Y_grad, hessian=None)
-  Y_tensor = Tensor(tensor_type=vec, basis=basis, components=Y)
+  Y_tensor = TangentVector(p=p, basis=basis, components=Y)
 
   out = Connection(basis=basis, christoffel_symbols=Jet(value=Gamma, gradient=None, hessian=None, dim=2)).covariant_derivative(X_tensor, Y_tensor)
   expected = jnp.einsum("i,ki->k", X_val, Y_grad)
@@ -209,13 +220,12 @@ def test_covariant_derivative_with_connection_matches_formula():
   conn = Connection(basis=basis, christoffel_symbols=Jet(value=Gamma, gradient=None, hessian=None, dim=2))
 
   X_val = jnp.array([0.3, -1.1])
-  vec = TensorType(1, 0)
-  X_tensor = Tensor(tensor_type=vec, basis=basis, components=Jet(value=X_val, gradient=None, hessian=None, dim=2))
+  X_tensor = TangentVector(p=p, basis=basis, components=Jet(value=X_val, gradient=None, hessian=None, dim=2))
 
   Y_val = jnp.array([1.4, 0.6])
   Y_grad = jnp.array([[0.2, 0.1],
                       [0.0, -0.4]])
-  Y_tensor = Tensor(tensor_type=vec, basis=basis, components=Jet(value=Y_val, gradient=Y_grad, hessian=None))
+  Y_tensor = TangentVector(p=p, basis=basis, components=Jet(value=Y_val, gradient=Y_grad, hessian=None))
 
   out = Connection(basis=basis, christoffel_symbols=Jet(value=Gamma, gradient=None, hessian=None, dim=2)).covariant_derivative(X_tensor, Y_tensor)
   term1 = jnp.einsum("i,ki->k", X_val, Y_grad)
@@ -248,9 +258,8 @@ def test_covariant_derivative_polar_plane_lc_connection():
   # Supply Y gradient (∂_i Y^k); arbitrary but fixed
   Y_grad = jnp.array([[0.3, -0.2],
                       [0.4,  0.1]])
-  vec = TensorType(1, 0)
-  X_tensor = Tensor(tensor_type=vec, basis=basis, components=Jet(value=X_val, gradient=None, hessian=None, dim=2))
-  Y_tensor = Tensor(tensor_type=vec, basis=basis, components=Jet(value=Y_val, gradient=Y_grad, hessian=None))
+  X_tensor = TangentVector(p=p, basis=basis, components=Jet(value=X_val, gradient=None, hessian=None, dim=2))
+  Y_tensor = TangentVector(p=p, basis=basis, components=Jet(value=Y_val, gradient=Y_grad, hessian=None))
 
   out = Connection(basis=basis, christoffel_symbols=Jet(value=Gamma, gradient=None, hessian=None, dim=2)).covariant_derivative(X_tensor, Y_tensor)
   expected = jnp.einsum("i,ki->k", X_val, Y_grad) + jnp.einsum("kij,i,j->k", Gamma, X_val, Y_val)
@@ -283,9 +292,8 @@ def test_covariant_derivative_hyperbolic_half_plane_ground_truth():
   Y_val = jnp.array([1.1, -0.5])
   Y_grad = jnp.array([[0.2, 0.0],
                       [0.1, -0.15]])
-  vec = TensorType(1, 0)
-  X_tensor = Tensor(tensor_type=vec, basis=basis, components=Jet(value=X_val, gradient=None, hessian=None, dim=2))
-  Y_tensor = Tensor(tensor_type=vec, basis=basis, components=Jet(value=Y_val, gradient=Y_grad, hessian=None))
+  X_tensor = TangentVector(p=p, basis=basis, components=Jet(value=X_val, gradient=None, hessian=None, dim=2))
+  Y_tensor = TangentVector(p=p, basis=basis, components=Jet(value=Y_val, gradient=Y_grad, hessian=None))
 
   out = Connection(basis=basis, christoffel_symbols=Jet(value=Gamma, gradient=None, hessian=None, dim=2)).covariant_derivative(X_tensor, Y_tensor)
   expected = jnp.einsum("i,ki->k", X_val, Y_grad) + jnp.einsum("kij,i,j->k", Gamma, X_val, Y_val)
@@ -309,3 +317,39 @@ def test_get_levi_civita_connection_euclidean_cartesian_zero():
   # Compare to known zero connection in this chart
   assert conn.christoffel_symbols.shape == (2, 2, 2)
   assert jnp.allclose(conn.christoffel_symbols.value, 0.0)
+
+
+def test_connection_change_basis_round_trip():
+    """
+    Tests that changing basis to a new basis and back to the original
+    recovers the original Christoffel symbols. This will fail if the
+    transformation rule is implemented incorrectly.
+    """
+    key = random.PRNGKey(123)
+    dim = 3
+
+    # 1. Create a connection with random Christoffel symbols in a random basis
+    basis_key, gamma_key = random.split(key)
+    basis_a = create_random_basis(basis_key, dim)
+
+    gamma_val_key, gamma_grad_key, gamma_hess_key = random.split(gamma_key, 3)
+    gamma_val = random.normal(gamma_val_key, (dim, dim, dim))
+    gamma_grad = random.normal(gamma_grad_key, (dim, dim, dim, dim))
+    gamma_hess = random.normal(gamma_hess_key, (dim, dim, dim, dim, dim))
+    gamma_jet_a = Jet(value=gamma_val, gradient=gamma_grad, hessian=gamma_hess)
+
+    conn_a = Connection(basis=basis_a, christoffel_symbols=gamma_jet_a)
+
+    # 2. Get the standard basis
+    basis_std = get_standard_basis(basis_a.p)
+
+    # 3. Perform the round trip transformation
+    conn_std = change_basis(conn_a, basis_std)
+    conn_a_round_trip = change_basis(conn_std, basis_a)
+
+    # 4. Check if the original and round-trip symbols are the same
+    np.testing.assert_allclose(
+        conn_a.christoffel_symbols.value,
+        conn_a_round_trip.christoffel_symbols.value,
+        rtol=1e-5
+    )

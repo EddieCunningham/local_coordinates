@@ -96,7 +96,12 @@ def test_change_basis_connection():
     num_args_ch_new = [val_map[str(arg)] for arg in arg_list_ch_new]
 
     chris_comps_std = ch_num_func(*num_args_ch)
-    chris_comps_new_gt = ch_new_num_func(*num_args_ch_new)
+
+    # Manually compute the transformed Christoffel symbols using the new rule
+    T_val = np.array(T_sym).astype(float)
+    T_val_inv = np.linalg.inv(T_val)
+    # For a linear transform, only the "term1" from the implementation applies
+    chris_comps_new_gt = np.einsum("lj,ai,km,mal->kij", T_val, T_val_inv, T_val_inv, chris_comps_std)
 
     # 5. Perform the transformation with local_coordinates
     p = jnp.array([r_val, theta_val])

@@ -51,6 +51,28 @@ class TangentVector(AbstractBatchableObject):
 
     return derivation(standard_vector.components.get_value_jet(), f.get_gradient_jet())
 
+  def __add__(self, other: 'TangentVector') -> 'TangentVector':
+    """
+    Add two tangent vectors.
+    """
+    assert self.batch_size is None and other.batch_size is None, "Use vmap to add batched tangent vectors"
+    p = eqx.error_if(self.p, ~(jnp.allclose(self.p, other.p)), "Tangent vectors must be defined at the same point")
+    # Write other in terms of the current basis
+    other = change_basis(other, self.basis)
+    return TangentVector(p, self.components + other.components, self.basis)
+
+  def __neg__(self) -> 'TangentVector':
+    """
+    Negate a tangent vector.
+    """
+    return TangentVector(self.p, -self.components, self.basis)
+
+  def __sub__(self, other: 'TangentVector') -> 'TangentVector':
+    """
+    Subtract two tangent vectors.
+    """
+    return self + (-other)
+
 @dispatch
 def change_basis(vector: TangentVector, new_basis: BasisVectors) -> TangentVector:
   """
