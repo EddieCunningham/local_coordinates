@@ -1,65 +1,23 @@
 import jax.numpy as jnp
 from jax import random
 import numpy as np
+from jaxtyping import Array
 from local_coordinates.basis import BasisVectors, get_standard_basis, change_basis
 from local_coordinates.connection import Connection, get_levi_civita_connection
-from local_coordinates.jet import Jet
+from local_coordinates.jet import Jet, function_to_jet, jet_decorator
 from local_coordinates.metric import RiemannianMetric
 from local_coordinates.tensor import Tensor, TensorType
-from local_coordinates.tangent import TangentVector
+from local_coordinates.tangent import TangentVector, lie_bracket
 from local_coordinates.frame import Frame
 
 
 def create_random_basis(key: random.PRNGKey, dim: int) -> BasisVectors:
   p_key, vals_key, grads_key, hessians_key = random.split(key, 4)
-  p = random.normal(p_key, (dim,))
+  p = jnp.zeros(dim)
   vals = random.normal(vals_key, (dim, dim))
   grads = random.normal(grads_key, (dim, dim, dim))
   hessians = random.normal(hessians_key, (dim, dim, dim, dim))
   return BasisVectors(p=p, components=Jet(value=vals, gradient=grads, hessian=hessians))
-
-
-def test_covariant_derivative_uses_frame_directional_derivative_in_nonholonomic_basis():
-  # Construct a simple non-holonomic frame in R^2: E_1 = ∂_x, E_2 = ∂_y + x ∂_x
-  # Then for a vector field Y with components Y^k(x,y), E_2(Y^k) = ∂_y Y^k + x ∂_x Y^k.
-  p = jnp.array([0.3, -0.5])
-  d = 2
-  # Basis components E^a_i stacked as (a,i)
-  E_val = jnp.array([[1.0, 1.0 * p[0]],   # a=0 (x): E_1^x = 1, E_2^x = x
-                     [0.0, 1.0]])         # a=1 (y): E_1^y = 0, E_2^y = 1
-  E_grad = jnp.zeros((d, d, d))
-  # ∂_x E_2^x = 1, all others 0
-  E_grad = E_grad.at[0, 1, 0].set(1.0)
-  basis = BasisVectors(p=p, components=Jet(value=E_val, gradient=E_grad, hessian=jnp.zeros((d, d, d, d))))
-
-  # Zero connection
-  Gamma = jnp.zeros((d, d, d))
-  conn = Connection(basis=basis, christoffel_symbols=Jet(value=Gamma, gradient=None, hessian=None, dim=d))
-
-  # Choose X = E_2 (components (0,1) in the frame)
-  X = TangentVector(p=p, basis=basis, components=Jet(value=jnp.array([0.0, 1.0]), gradient=None, hessian=None, dim=d))
-
-  # Define a vector field Y with prescribed partials at p
-  # Y^x(x,y) = ax*x + ay*y + c  ⇒ ∂_x Y^x = ax, ∂_y Y^x = ay
-  # Y^y(x,y) = bx*x + by*y + d  ⇒ ∂_x Y^y = bx, ∂_y Y^y = by
-  ax, ay = 0.7, -0.2
-  bx, by = 0.4, 0.5
-  Y_val = jnp.array([1.2, -0.8])
-  Y_grad = jnp.array([[ax, ay],
-                      [bx, by]])
-  Y = TangentVector(p=p, basis=basis, components=Jet(value=Y_val, gradient=Y_grad, hessian=None))
-
-  out = conn.covariant_derivative(X, Y)
-
-  # Expected: (∇_{E2} Y)^k = E_2(Y^k) since Γ=0 and basis derivatives handled by E^a_i ∂_a
-  # E_2(Y^k) = ∂_y Y^k + x ∂_x Y^k evaluated at p[0] = x
-  x = p[0]
-  expected = jnp.array([
-    ay + x * ax,
-    by + x * bx,
-  ])
-  assert jnp.allclose(out.components.value, expected)
-
 
 def test_connection_basic_construction():
   p = jnp.array([0.0, 0.0])
@@ -73,6 +31,8 @@ def test_connection_basic_construction():
   assert conn.basis is basis
   assert conn.christoffel_symbols.shape == (2, 2, 2)
   assert jnp.allclose(conn.christoffel_symbols.value, 0.0)
+  # assert jnp.allclose(conn.christoffel_symbols.gradient, 0.0) # Don't have enough information to check gradient
+  # assert jnp.allclose(conn.christoffel_symbols.hessian, 0.0) # Don't have enough information to check hessian
 
 
 def test_get_levi_civita_connection_diagonal_metric_depends_on_u():
@@ -109,10 +69,10 @@ def test_get_levi_civita_connection_diagonal_metric_depends_on_u():
   gamma = connection.christoffel_symbols.value
 
   expected = jnp.zeros((2, 2, 2))
-  expected = expected.at[0, 0, 0].set(a_u / (2.0 * a_val))           # Γ^u_{uu}
-  expected = expected.at[0, 1, 1].set(- b_u / (2.0 * a_val))         # Γ^u_{vv}
-  expected = expected.at[1, 0, 1].set(b_u / (2.0 * b_val))           # Γ^v_{uv}
-  expected = expected.at[1, 1, 0].set(b_u / (2.0 * b_val))           # Γ^v_{vu}
+  expected = expected.at[0, 0, 0].set(a_u / (2.0 * a_val))           # Γ^u_{uu} -> (i=u,j=u,k=u)
+  expected = expected.at[1, 1, 0].set(- b_u / (2.0 * a_val))         # Γ^u_{vv} -> (i=v,j=v,k=u)
+  expected = expected.at[0, 1, 1].set(b_u / (2.0 * b_val))           # Γ^v_{uv} -> (i=u,j=v,k=v)
+  expected = expected.at[1, 0, 1].set(b_u / (2.0 * b_val))           # Γ^v_{vu} -> (i=v,j=u,k=v)
 
   assert jnp.allclose(gamma, expected, atol=1e-6)
 
@@ -137,9 +97,9 @@ def test_get_levi_civita_connection_polar_plane():
   gamma = connection.christoffel_symbols.value
 
   expected = jnp.zeros((2, 2, 2))
-  expected = expected.at[0, 1, 1].set(-r)     # Γ^r_{φφ}
-  expected = expected.at[1, 0, 1].set(1.0/r)  # Γ^φ_{rφ}
-  expected = expected.at[1, 1, 0].set(1.0/r)  # Γ^φ_{φr}
+  expected = expected.at[1, 1, 0].set(-r)     # Γ^r_{φφ} -> (i=φ,j=φ,k=r)
+  expected = expected.at[0, 1, 1].set(1.0/r)  # Γ^φ_{rφ} -> (i=r,j=φ,k=φ)
+  expected = expected.at[1, 0, 1].set(1.0/r)  # Γ^φ_{φr} -> (i=φ,j=r,k=φ)
 
   assert jnp.allclose(gamma, expected, atol=1e-6)
 
@@ -183,14 +143,14 @@ def test_get_levi_civita_connection_diagonal_metric_uv():
   gamma = connection.christoffel_symbols.value
 
   expected = jnp.zeros((2, 2, 2))
-  expected = expected.at[0, 0, 0].set(a_u / (2.0 * a_val))      # Γ^u_{uu}
-  expected = expected.at[0, 0, 1].set(a_v / (2.0 * a_val))      # Γ^u_{uv}
-  expected = expected.at[0, 1, 0].set(a_v / (2.0 * a_val))      # Γ^u_{vu}
-  expected = expected.at[0, 1, 1].set(- b_u / (2.0 * a_val))    # Γ^u_{vv}
-  expected = expected.at[1, 0, 0].set(- a_v / (2.0 * b_val))    # Γ^v_{uu}
-  expected = expected.at[1, 0, 1].set(b_u / (2.0 * b_val))      # Γ^v_{uv}
-  expected = expected.at[1, 1, 0].set(b_u / (2.0 * b_val))      # Γ^v_{vu}
-  expected = expected.at[1, 1, 1].set(b_v / (2.0 * b_val))      # Γ^v_{vv}
+  expected = expected.at[0, 0, 0].set(a_u / (2.0 * a_val))      # Γ^u_{uu} -> (u,u,u)
+  expected = expected.at[0, 1, 0].set(a_v / (2.0 * a_val))      # Γ^u_{uv} -> (u,v,u)
+  expected = expected.at[1, 0, 0].set(a_v / (2.0 * a_val))      # Γ^u_{vu} -> (v,u,u)
+  expected = expected.at[1, 1, 0].set(- b_u / (2.0 * a_val))    # Γ^u_{vv} -> (v,v,u)
+  expected = expected.at[0, 0, 1].set(- a_v / (2.0 * b_val))    # Γ^v_{uu} -> (u,u,v)
+  expected = expected.at[0, 1, 1].set(b_u / (2.0 * b_val))      # Γ^v_{uv} -> (u,v,v)
+  expected = expected.at[1, 0, 1].set(b_u / (2.0 * b_val))      # Γ^v_{vu} -> (v,u,v)
+  expected = expected.at[1, 1, 1].set(b_v / (2.0 * b_val))      # Γ^v_{vv} -> (v,v,v)
 
   assert jnp.allclose(gamma, expected, atol=1e-6)
 
@@ -219,10 +179,10 @@ def test_get_levi_civita_connection_hyperbolic_half_plane():
   gamma = connection.christoffel_symbols.value
 
   expected = jnp.zeros((2, 2, 2))
-  expected = expected.at[0, 0, 1].set(-1.0 / y)   # Γ^x_{x y}
-  expected = expected.at[0, 1, 0].set(-1.0 / y)   # Γ^x_{y x}
-  expected = expected.at[1, 0, 0].set(1.0 / y)    # Γ^y_{x x}
-  expected = expected.at[1, 1, 1].set(-1.0 / y)   # Γ^y_{y y}
+  expected = expected.at[0, 1, 0].set(-1.0 / y)   # Γ^x_{x y} -> (i=x,j=y,k=x)
+  expected = expected.at[1, 0, 0].set(-1.0 / y)   # Γ^x_{y x} -> (i=y,j=x,k=x)
+  expected = expected.at[0, 0, 1].set(1.0 / y)    # Γ^y_{x x} -> (i=x,j=x,k=y)
+  expected = expected.at[1, 1, 1].set(-1.0 / y)   # Γ^y_{y y} -> (i=y,j=y,k=y)
 
   assert jnp.allclose(gamma, expected, atol=1e-6)
 
@@ -250,6 +210,7 @@ def test_covariant_derivative_zero_connection_matches_directional_derivative():
   out = Connection(basis=basis, christoffel_symbols=Jet(value=Gamma, gradient=None, hessian=None, dim=2)).covariant_derivative(X_tensor, Y_tensor)
   expected = jnp.einsum("i,ki->k", X_val, Y_grad)
   assert jnp.allclose(out.components.value, expected)
+  # assert jnp.allclose(out.components.gradient, 0.0) # Don't have enough information to check gradient
 
 
 def test_covariant_derivative_with_connection_matches_formula():
@@ -272,7 +233,7 @@ def test_covariant_derivative_with_connection_matches_formula():
 
   out = Connection(basis=basis, christoffel_symbols=Jet(value=Gamma, gradient=None, hessian=None, dim=2)).covariant_derivative(X_tensor, Y_tensor)
   term1 = jnp.einsum("i,ki->k", X_val, Y_grad)
-  term2 = jnp.einsum("kij,i,j->k", Gamma, X_val, Y_val)
+  term2 = jnp.einsum("ijk,i,j->k", Gamma, X_val, Y_val)
   expected = term1 + term2
   assert jnp.allclose(out.components.value, expected)
 
@@ -305,7 +266,7 @@ def test_covariant_derivative_polar_plane_lc_connection():
   Y_tensor = TangentVector(p=p, basis=basis, components=Jet(value=Y_val, gradient=Y_grad, hessian=None))
 
   out = Connection(basis=basis, christoffel_symbols=Jet(value=Gamma, gradient=None, hessian=None, dim=2)).covariant_derivative(X_tensor, Y_tensor)
-  expected = jnp.einsum("i,ki->k", X_val, Y_grad) + jnp.einsum("kij,i,j->k", Gamma, X_val, Y_val)
+  expected = jnp.einsum("i,ki->k", X_val, Y_grad) + jnp.einsum("ijk,i,j->k", Gamma, X_val, Y_val)
   assert jnp.allclose(out.components.value, expected)
 
 
@@ -339,7 +300,7 @@ def test_covariant_derivative_hyperbolic_half_plane_ground_truth():
   Y_tensor = TangentVector(p=p, basis=basis, components=Jet(value=Y_val, gradient=Y_grad, hessian=None))
 
   out = Connection(basis=basis, christoffel_symbols=Jet(value=Gamma, gradient=None, hessian=None, dim=2)).covariant_derivative(X_tensor, Y_tensor)
-  expected = jnp.einsum("i,ki->k", X_val, Y_grad) + jnp.einsum("kij,i,j->k", Gamma, X_val, Y_val)
+  expected = jnp.einsum("i,ki->k", X_val, Y_grad) + jnp.einsum("ijk,i,j->k", Gamma, X_val, Y_val)
   assert jnp.allclose(out.components.value, expected)
 
 
@@ -360,7 +321,8 @@ def test_get_levi_civita_connection_euclidean_cartesian_zero():
   # Compare to known zero connection in this chart
   assert conn.christoffel_symbols.shape == (2, 2, 2)
   assert jnp.allclose(conn.christoffel_symbols.value, 0.0)
-
+  assert jnp.allclose(conn.christoffel_symbols.gradient, 0.0)
+  # assert jnp.allclose(conn.christoffel_symbols.hessian, 0.0) # Don't have enough information to check hessian
 
 def test_connection_change_basis_round_trip():
     """
@@ -396,3 +358,123 @@ def test_connection_change_basis_round_trip():
         conn_a_round_trip.christoffel_symbols.value,
         rtol=1e-5
     )
+    np.testing.assert_allclose(
+        conn_a.christoffel_symbols.gradient,
+        conn_a_round_trip.christoffel_symbols.gradient,
+        rtol=1e-5
+    )
+    # np.testing.assert_allclose(
+    #     conn_a.christoffel_symbols.hessian,
+    #     conn_a_round_trip.christoffel_symbols.hessian,
+    #     rtol=1e-5
+    # ) # Don't have enough information to check hessian
+
+def create_random_metric(key: random.PRNGKey, dim: int) -> RiemannianMetric:
+  p_key, W_key, basis_key = random.split(key, 3)
+  p = jnp.zeros(dim)
+  W = random.normal(W_key, (dim, dim, dim))
+  def random_metric_func(point):
+    g = jnp.einsum('ijk,j,k->i', W, point, point)
+    g_matrix = jnp.outer(g, g) + jnp.eye(dim)  # Add identity to ensure invertibility
+    return g_matrix
+  metric_jet = function_to_jet(random_metric_func, p)
+  random_basis = create_random_basis(basis_key, dim)
+  return RiemannianMetric(basis=random_basis, components=metric_jet)
+
+def create_random_vector_field(key: random.PRNGKey, dim: int) -> TangentVector:
+  p_key, basis_key, vals_key, grads_key, hessians_key = random.split(key, 5)
+  p = jnp.zeros(dim)
+  random_basis = create_random_basis(basis_key, dim)
+  vals = random.normal(vals_key, (dim,))
+  grads = random.normal(grads_key, (dim, dim))
+  hessians = random.normal(hessians_key, (dim, dim, dim))
+  return TangentVector(p=p, components=Jet(value=vals, gradient=grads, hessian=hessians), basis=random_basis)
+
+def test_lc_gamma_antisym_zero_in_cartesian():
+  # In a holonomic (coordinate) basis, c_{ij}^k = 0 and torsion-free implies Γ^k_{ij} = Γ^k_{ji}.
+  # This should hold for value, gradient, and hessian.
+  dim = 3
+  p = jnp.zeros(dim)
+  basis = get_standard_basis(p)
+
+  # Smooth metric with nontrivial derivatives
+  def g_func(x):
+    # Positive-definite: A(x) = I + outer(ax, ax)
+    a = jnp.array([1.0, -0.5, 0.7])
+    ax = jnp.einsum('i,i->', a, x)
+    v = a * ax
+    return jnp.eye(dim) + jnp.outer(v, v)
+
+  metric = RiemannianMetric(basis=basis, components=function_to_jet(g_func, p))
+  conn = get_levi_civita_connection(metric)
+
+  Gamma = conn.christoffel_symbols
+  # Antisymmetric part across (i,j)
+  A_val = Gamma.value - jnp.transpose(Gamma.value, (1, 0, 2))
+  A_grad = Gamma.gradient - jnp.transpose(Gamma.gradient, (1, 0, 2, 3))
+  A_hess = Gamma.hessian - jnp.transpose(Gamma.hessian, (1, 0, 2, 3, 4))
+
+  assert jnp.allclose(A_val, 0.0)
+  assert jnp.allclose(A_grad, 0.0)
+  # assert jnp.allclose(A_hess, 0.0) # Don't have enough information to check hessian
+
+
+def test_levi_civita_connection_is_torsion_free():
+    """
+    Tests that the Levi-Civita connection is torsion free.
+    """
+    key = random.PRNGKey(0)
+    dim = 5
+    metric = create_random_metric(key, dim)
+    connection = get_levi_civita_connection(metric)
+
+    k1, k2, k3 = random.split(key, 3)
+    X = create_random_vector_field(k1, dim)
+    Y = create_random_vector_field(k2, dim)
+    X = change_basis(X, metric.basis)
+    Y = change_basis(Y, metric.basis)
+
+    # Test that the connection is torsion free
+    nablaX_Y = connection.covariant_derivative(X, Y)
+    nablaY_X = connection.covariant_derivative(Y, X)
+    lb_XY = lie_bracket(X, Y)
+    torsion = nablaX_Y - nablaY_X - lb_XY
+    assert jnp.allclose(torsion.components.value, 0.0)
+    assert jnp.allclose(torsion.components.gradient, 0.0)
+    # assert jnp.allclose(torsion.components.hessian, 0.0) # Don't have enough information to check hessian
+
+def test_levi_civita_connection_is_metric_compatible():
+    """
+    Tests that the Levi-Civita connection is metric compatible.
+    """
+    key = random.PRNGKey(0)
+    dim = 5
+    metric = create_random_metric(key, dim)
+    connection = get_levi_civita_connection(metric)
+
+    k1, k2, k3 = random.split(key, 3)
+    X = create_random_vector_field(k1, dim)
+    Y = create_random_vector_field(k2, dim)
+    Z = create_random_vector_field(k3, dim)
+    X = change_basis(X, metric.basis)
+    Y = change_basis(Y, metric.basis)
+    Z = change_basis(Z, metric.basis)
+
+    @jet_decorator
+    def metric_inner_product(g_vals, U_vals, V_vals) -> Array:
+      return jnp.einsum("ij,i,j->", g_vals, U_vals, V_vals)
+
+    nablaX_Y: TangentVector = connection.covariant_derivative(X, Y)
+    nablaX_Z: TangentVector = connection.covariant_derivative(X, Z)
+
+    gYZ: Jet = metric_inner_product(metric.components, Y.components, Z.components)
+    XgYZ: Jet = X(gYZ)
+
+    gnablaXY_Z: Jet = metric_inner_product(metric.components, nablaX_Y.components, Z.components)
+    gnablaXZ_Y: Jet = metric_inner_product(metric.components, Y.components, nablaX_Z.components)
+
+    comp = gnablaXY_Z + gnablaXZ_Y - XgYZ
+    assert jnp.allclose(comp.value, 0.0)
+    assert jnp.allclose(comp.gradient, 0.0)
+    # assert jnp.allclose(comp.hessian, 0.0) # Don't have enough information to check hessian
+

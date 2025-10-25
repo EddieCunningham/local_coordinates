@@ -13,14 +13,17 @@ from local_coordinates.jet import Jet
 from local_coordinates.jet import jet_decorator
 from local_coordinates.metric import RiemannianMetric
 from local_coordinates.jet import get_identity_jet
-from local_coordinates.frame import Frame, get_lie_bracket_between_frame_pairs
+from local_coordinates.frame import Frame, get_lie_bracket_between_frame_pairs, basis_to_frame
 from local_coordinates.tangent import TangentVector
+
 class Connection(AbstractBatchableObject):
   """
   A Connection is a map from one tangent space to another.
+  The components of the Christoffel symbols, Gamma^k_{ij}, are to be
+  indexed as Gamma^k_{ij} = christoffel_symbols[i, j, k].
   """
   basis: BasisVectors
-  christoffel_symbols: Annotated[Jet, "N D D"] # The components of the Christoffel symbols written in the chosen basis
+  christoffel_symbols: Annotated[Jet, "D D N"] # The components of the Christoffel symbols written in the chosen basis
 
   @property
   def batch_size(self):
@@ -41,7 +44,7 @@ class Connection(AbstractBatchableObject):
       # (∇_X Y)^k = X^i E_i(Y^k) + Γ^k_{ij} X^i Y^j,
       # where E_i(Y^k) = E_i^a ∂_a Y^k.
       term1 = jnp.einsum("i,ai,ka->k", x_val, E_val, y_grad_val)
-      term2 = jnp.einsum("kij,i,j->k", gamma_val, x_val, y_val)
+      term2 = jnp.einsum("ijk,i,j->k", gamma_val, x_val, y_val)
       return term1 + term2
 
     E_value_jet = self.basis.components.get_value_jet()
@@ -49,7 +52,7 @@ class Connection(AbstractBatchableObject):
     x_value_jet = X.components.get_value_jet()
     y_value_jet = Y.components.get_value_jet()
     y_gradient_jet = Y.components.get_gradient_jet()
-    new_components = components(E_value_jet, gamma_value_jet, x_value_jet, y_value_jet, y_gradient_jet)
+    new_components: Jet = components(E_value_jet, gamma_value_jet, x_value_jet, y_value_jet, y_gradient_jet)
     return TangentVector(self.basis.p, new_components, self.basis)
 
 @dispatch
@@ -63,8 +66,8 @@ def change_basis(connection: Connection, new_basis: BasisVectors) -> Connection:
   @jet_decorator
   def get_components(christoffel_symbols_val, E_tilde_val, T_val, T_grad) -> Jet:
     T_val_inv = jnp.linalg.inv(T_val)
-    term1 = jnp.einsum("lj,ai,km,mal->kij", T_val, T_val_inv, T_val_inv, christoffel_symbols_val)
-    term2 = jnp.einsum("ai,mja,km->kij", E_tilde_val, T_grad, T_val_inv)
+    term1 = jnp.einsum("lj,ai,km,alm->ijk", T_val, T_val_inv, T_val_inv, christoffel_symbols_val)
+    term2 = jnp.einsum("ai,mja,km->ijk", E_tilde_val, T_grad, T_val_inv)
     return term1 + term2
 
   cs_value_jet = connection.christoffel_symbols.get_value_jet()
@@ -75,50 +78,44 @@ def change_basis(connection: Connection, new_basis: BasisVectors) -> Connection:
   return Connection(basis=new_basis, christoffel_symbols=new_christoffel_symbols)
 
 def get_levi_civita_connection(metric: RiemannianMetric) -> Connection:
-  # Accept both primal and dual bases on the metric; convert to primal if needed
+  """Get the Levi-Civita connection from a Riemannian metric in terms of the basis of the metric.
+  """
   basis: BasisVectors = metric.basis
 
-  N = basis.p.shape[0]
-  frame = Frame(p=basis.p, basis=basis, components=get_identity_jet(N))
+  frame = basis_to_frame(basis)
   lie_bracket_pairs: Annotated[TangentVector, "D D"] = get_lie_bracket_between_frame_pairs(frame)
 
-  ax = (0, None)
-  vmapped_change_basis = eqx.filter_vmap(eqx.filter_vmap(change_basis, in_axes=ax), in_axes=ax)
-  lie_bracket_pairs = vmapped_change_basis(lie_bracket_pairs, basis)
-
-  # Get the metric components
-  g_ijk: Jet = metric.components.get_gradient_jet()
-
   @jet_decorator
-  def get_christoffel_symbols(c_kij_val, g_ij_val, g_ijk_grad) -> Array:
+  def get_christoffel_symbols(E_val, g_val, g_grad, c_val) -> Array:
+    r"""
+    \Gamma_{ij}^m = \frac{1}{2}\left(E_i(g_{jk})g^{km} + E_j(g_{ik})g^{km} - E_k(g_{ij})g^{km} + c_{ij}^m - c_{ik}^l g_{lj}g^{km} - c_{jk}^l g_{li}g^{km}\right)
     """
-    Gamma_{kij} = 1/2 (g_{jk,i} + g_{ik,j} - g_{ij,k} + c_{kij} - c_{jik} - c_{ijk})
-    """
-    ginv = jnp.linalg.inv(g_ij_val)              # g^{kl}
+    g_val_inv = jnp.linalg.inv(g_val)
 
-    c_kij_lower = jnp.einsum("mij,mk->kij", c_kij_val, g_ij_val)
+    # E_i(g_{jk})g^{km}
+    term1 = jnp.einsum("ai,jka,km->ijm", E_val, g_grad, g_val_inv)
 
-    # Arrange all terms with axes (k,i,j):
-    # t1[k,i,j] = g_{jk,i}
-    t1 = jnp.einsum("jki->kij", g_ijk_grad)
-    # t2[k,i,j] = g_{ik,j}
-    t2 = jnp.einsum("ikj->kij", g_ijk_grad)
-    # t3[k,i,j] = g_{ij,k}
-    t3 = jnp.einsum("ijk->kij", g_ijk_grad)
-    t4 = jnp.einsum("kij->kij", c_kij_lower)
-    t5 = jnp.einsum("kij->jik", c_kij_lower)
-    t6 = jnp.einsum("kij->ijk", c_kij_lower)
+    # E_j(g_{ik})g^{km}
+    term2 = jnp.einsum("aj,ika,km->ijm", E_val, g_grad, g_val_inv)
 
-    gamma_lower = 0.5 * (t1 + t2 - t3 + t4 - t5 - t6)
-    gamma_upper = jnp.einsum("km,mij->kij", ginv, gamma_lower)
-    return gamma_upper
+    # -E_k(g_{ij})g^{km}
+    term3 = -jnp.einsum("ak,ija,km->ijm", E_val, g_grad, g_val_inv)
 
-  c_kij_val = lie_bracket_pairs.components.get_value_jet()
-  g_ij_val = metric.components.get_value_jet()
-  g_ijk_grad = g_ijk.get_value_jet()
-  christoffel_symbols: Jet = get_christoffel_symbols(c_kij_val, g_ij_val, g_ijk_grad)
+    # c_{ij}^m
+    term4 = jnp.einsum("ijm->ijm", c_val)
+
+    # -c_{ik}^l g_{lj}g^{km}
+    term5 = -jnp.einsum("ikl,lj,km->ijm", c_val, g_val, g_val_inv)
+
+    # -c_{jk}^l g_{li}g^{km}
+    term6 = -jnp.einsum("jkl,li,km->ijm", c_val, g_val, g_val_inv)
+
+    return 0.5 * (term1 + term2 + term3 + term4 + term5 + term6)
+
+  E_val: Jet = basis.components.get_value_jet()
+  g_val: Jet = metric.components.get_value_jet()
+  g_grad: Jet = metric.components.get_gradient_jet()
+  c_val: Jet = lie_bracket_pairs.components.get_value_jet()
+
+  christoffel_symbols: Jet = get_christoffel_symbols(E_val, g_val, g_grad, c_val)
   return Connection(basis=basis, christoffel_symbols=christoffel_symbols)
-
-
-
-
