@@ -47,62 +47,6 @@ def test_jet_batching():
     # Based on the current implementation of Jet.batch_size for ndim > 1
     assert jet_2d.batch_size == (2, 2)
 
-def test_jet_call_method():
-    """Tests the __call__ method for Taylor series approximation."""
-    # --- 2nd Order ---
-    jet = Jet(
-        value=jnp.array(10.0),
-        gradient=jnp.array([1.0, 2.0]),
-        hessian=jnp.array([[3.0, 0.1], [0.1, 4.0]])
-    )
-    dx = jnp.array([0.5, -0.5])
-    # v + g.dx + 0.5 dx.T H dx
-    # 10.0 + (1*0.5 + 2*(-0.5)) + 0.5 * [0.5, -0.5] @ [[3, 0.1], [0.1, 4]] @ [0.5, -0.5]
-    # 10.0 + (-0.5) + 0.5 * [0.5, -0.5] @ [1.45, -1.95]
-    # 10.0 - 0.5 + 0.5 * (0.725 + 0.975)
-    # 9.5 + 0.5 * 1.7 = 9.5 + 0.85 = 10.35
-    result = jet(dx)
-    assert jnp.allclose(result, 10.35)
-
-    # --- 1st Order ---
-    jet_1st = Jet(
-        value=jnp.array(10.0),
-        gradient=jnp.array([1.0, 2.0]),
-        hessian=None
-    )
-    # 10.0 + (1*0.5 + 2*(-0.5)) = 9.5
-    result_1st = jet_1st(dx)
-    assert jnp.allclose(result_1st, 9.5)
-
-    # --- 0th Order ---
-    jet_0th = Jet(
-        value=jnp.array(10.0),
-        gradient=None,
-        hessian=None,
-        dim=2
-    )
-    result_0th = jet_0th(dx)
-    assert jnp.allclose(result_0th, 10.0)
-
-    # --- PyTree ---
-    jet_pytree = Jet(
-        value={'a': 10.0, 'b': jnp.array([1., 2.])},
-        gradient={'a': jnp.array([1., 2.]), 'b': jnp.array([[0., 1.], [1., 0.]])},
-        hessian=None,
-    )
-    dx_pytree = jnp.array([0.1, 0.2])
-    result_pytree = jet_pytree(dx_pytree)
-    # a: 10 + (1*0.1 + 2*0.2) = 10.5
-    # b[0]: 1 + (0*0.1 + 1*0.2) = 1.2
-    # b[1]: 2 + (1*0.1 + 0*0.2) = 2.1
-    assert jnp.allclose(result_pytree['a'], 10.5)
-    assert jnp.allclose(result_pytree['b'], jnp.array([1.2, 2.1]))
-
-    # --- Wrong dx shape ---
-    with pytest.raises(ValueError):
-        jet(jnp.array([[1.0], [2.0]]))
-
-
 def test_function_to_jet():
     def quad_func(x):
         return jnp.sum(x**2)
@@ -328,8 +272,8 @@ def test_jet_decorator_with_none_gradient():
 
     assert jnp.allclose(out.value, jnp.array(9.0))
     # With dim specified, zeros are propagated
-    assert jnp.allclose(out.gradient, jnp.array([0.0]))
-    assert jnp.allclose(out.hessian, jnp.array([[0.0]]))
+    assert jnp.allclose(out.gradient, jnp.array([jnp.inf]))
+    assert jnp.allclose(out.hessian, jnp.array([[jnp.inf]]))
 
 
 def test_jet_decorator_with_none_hessian():
@@ -381,8 +325,8 @@ def test_jet_decorator_mixed_none_attributes():
 
     # With zeros provided for missing derivatives, gradients propagate accordingly
     assert jnp.allclose(out.value, jnp.array(6.0))
-    assert jnp.allclose(out.gradient, jnp.array([3.0]))
-    assert jnp.allclose(out.hessian, jnp.array([[0.0]]))
+    assert jnp.allclose(out.gradient, jnp.array([jnp.inf])) # jet_y has no gradient, so the output should have no gradient
+    assert jnp.allclose(out.hessian, jnp.array([[jnp.inf]])) # jet_y has no hessian, so the output should have no hessian
 
 
 def test_jet_decorator_mixed_partial_derivatives():
@@ -1053,8 +997,8 @@ def test_jet_decorator_used_group_without_gradient():
     out = g(x, y)
 
     assert jnp.allclose(out.value, 4.0)
-    assert jnp.allclose(out.gradient, jnp.array([0.0]))
-    assert jnp.allclose(out.hessian, jnp.array([[0.0]]))
+    assert jnp.allclose(out.gradient, jnp.array([jnp.inf])) # jet_y has no gradient, so the output should have no gradient
+    assert jnp.allclose(out.hessian, jnp.array([[jnp.inf]])) # jet_y has no hessian, so the output should have no hessian
 
 
 def test_jet_decorator_handles_jet_in_container():

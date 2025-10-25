@@ -95,11 +95,11 @@ class Jet(AbstractBatchableObject):
   def __init__(self, value: Scalar, gradient: Optional[Float[Array, "N"]], hessian: Optional[Float[Array, "N N"]], dim: Optional[int] = None):
     self.value = value
 
-    # Helper to create zeros matching value leaves with an extra trailing axis/axes of size dim.
-    def zeros_like_value_with_trailing(trailing_shape):
+    # Helper to create inf matching value leaves with an extra trailing axis/axes of size dim.
+    def inf_like_value_with_trailing(trailing_shape):
       def make(v):
         va = jnp.asarray(v)
-        return jnp.zeros((*va.shape, *trailing_shape), dtype=va.dtype)
+        return jnp.ones((*va.shape, *trailing_shape), dtype=va.dtype)*jnp.inf
       return jtu.tree_map(make, self.value)
 
     # If both derivatives are missing and no dim is supplied, we cannot infer the trailing size.
@@ -110,13 +110,13 @@ class Jet(AbstractBatchableObject):
     if gradient is not None:
       self.gradient = gradient
     else:
-      self.gradient = None if dim is None else zeros_like_value_with_trailing((dim,))
+      self.gradient = None if dim is None else inf_like_value_with_trailing((dim,))
 
     # Set hessian: use provided, otherwise fill only if dim is given; else leave as None.
     if hessian is not None:
       self.hessian = hessian
     else:
-      self.hessian = None if dim is None else zeros_like_value_with_trailing((dim, dim))
+      self.hessian = None if dim is None else inf_like_value_with_trailing((dim, dim))
 
   def __check_init__(self):
     # For PyTree validation, check that structures match and each leaf has correct dims
