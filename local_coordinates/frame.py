@@ -11,6 +11,7 @@ from local_coordinates.jet import Jet, jet_decorator
 from local_coordinates.basis import BasisVectors, get_basis_transform, get_standard_basis, apply_contravariant_transform
 from local_coordinates.tangent import TangentVector, lie_bracket
 from functools import partial
+from local_coordinates.jet import get_identity_jet
 
 class Frame(AbstractBatchableObject):
   """
@@ -42,6 +43,12 @@ class Frame(AbstractBatchableObject):
     Transform the frame to the standard basis.
     """
     return change_basis(self, get_standard_basis(self.p))
+
+def basis_to_frame(basis: BasisVectors) -> Frame:
+  """
+  Create a frame from a basis.
+  """
+  return Frame(p=basis.p, components=get_identity_jet(basis.p.shape[0]), basis=basis)
 
 @dispatch
 def change_basis(frame: Frame, new_basis: BasisVectors) -> Frame:
