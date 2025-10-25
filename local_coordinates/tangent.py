@@ -130,7 +130,11 @@ def lie_bracket(X: TangentVector, Y: TangentVector) -> TangentVector:
   X_grad = X_standard.components.get_gradient_jet()
   Y_grad = Y_standard.components.get_gradient_jet()
   components: Jet = get_components(X_val, Y_val, X_grad, Y_grad)
-  return TangentVector(X.p, components, standard_basis)
+  out = TangentVector(X.p, components, standard_basis)
+
+  # Change back to the original basis
+  out = change_basis(out, X.basis)
+  return out
 
 def tangent_vectors_are_equivalent(a: TangentVector, b: TangentVector) -> bool:
   """
