@@ -34,6 +34,118 @@ class RiemannianMetric(Tensor):
     expected_batch_shape = self.basis.p.shape[:-1]
     actual_batch_shape = self.components.shape[:-2]
     if expected_batch_shape != actual_batch_shape:
-        raise ValueError(
-            f"Batch shape mismatch: basis implies {expected_batch_shape} but components have {actual_batch_shape}"
-        )
+      raise ValueError(
+        f"Batch shape mismatch: basis implies {expected_batch_shape} but components have {actual_batch_shape}"
+      )
+
+def raise_index(tensor: Tensor, metric: RiemannianMetric, index: int) -> Tensor:
+  """
+  Raise an index of a tensor using the metric.
+  """
+  if tensor.basis != metric.basis:
+    raise ValueError("Tensor and metric must be expressed in the same basis to raise an index.")
+
+  k = tensor.tensor_type.k
+  l = tensor.tensor_type.l
+
+  if not (0 <= index < k):
+    raise ValueError(f"Index to raise must be in [0, {k-1}], got {index}.")
+
+  # Build einsum indices
+  alphabet = "ijklmnopqrstuvwxyzabcdefgh"
+  if k + l + 2 > len(alphabet):
+    raise ValueError(f"Tensor has too many dimensions ({k + l}) to be handled.")
+
+  covar_labels = list(alphabet[:k])
+  contra_labels = list(alphabet[k:k + l])
+
+  # Label for the raised (new) contravariant index (choose an unused label)
+  new_contra_label = alphabet[k + l]
+
+  # The label of the covariant index we are raising (to be contracted)
+  contracted_label = covar_labels[index]
+
+  # Input tensor indices
+  input_indices = ''.join(covar_labels + contra_labels)
+
+  # Metric inverse indices: new free contravariant index and contracted label
+  # g^{ab} with indices (new_contra_label, contracted_label)
+  g_inv_indices = f"{new_contra_label}{contracted_label}"
+
+  # Output indices: covariant (excluding the raised one), followed by existing
+  # contravariant indices, followed by the new contravariant index
+  output_covar = [lbl for i, lbl in enumerate(covar_labels) if i != index]
+  output_contra = contra_labels + [new_contra_label]
+  output_indices = ''.join(output_covar + output_contra)
+
+  einsum_str = f"...{input_indices},...{g_inv_indices}->...{output_indices}"
+
+  # Compute inverse metric as a Jet
+  g_inv: Jet = jet_decorator(jnp.linalg.inv)(metric.components.get_value_jet())
+
+  @jet_decorator
+  def apply_raise(components, ginv):
+    return jnp.einsum(einsum_str, components, ginv)
+
+  new_components = apply_raise(tensor.components.get_value_jet(), g_inv.get_value_jet())
+
+  return Tensor(
+    tensor_type=TensorType(k=k - 1, l=l + 1),
+    basis=tensor.basis,
+    components=new_components,
+  )
+
+def lower_index(tensor: Tensor, metric: RiemannianMetric, index: int) -> Tensor:
+  """
+  Lower an index of a tensor using the metric.
+  """
+  if tensor.basis != metric.basis:
+    raise ValueError("Tensor and metric must be expressed in the same basis to lower an index.")
+
+  k = tensor.tensor_type.k
+  l = tensor.tensor_type.l
+
+  if not (0 <= index < l):
+    raise ValueError(f"Index to lower must be in [0, {l-1}], got {index}.")
+
+  # Build einsum indices
+  alphabet = "ijklmnopqrstuvwxyzabcdefgh"
+  if k + l + 2 > len(alphabet):
+    raise ValueError(f"Tensor has too many dimensions ({k + l}) to be handled.")
+
+  covar_labels = list(alphabet[:k])
+  contra_labels = list(alphabet[k:k + l])
+
+  # Label for the lowered (new) covariant index (choose an unused label)
+  new_covar_label = alphabet[k + l]
+
+  # The label of the contravariant index we are lowering (to be contracted)
+  contracted_label = contra_labels[index]
+
+  # Input tensor indices
+  input_indices = ''.join(covar_labels + contra_labels)
+
+  # Metric indices: contracted label and new free covariant label
+  # g_{ab} with indices (contracted_label, new_covar_label)
+  g_indices = f"{contracted_label}{new_covar_label}"
+
+  # Output indices: covariant (existing + new), followed by contravariant excluding lowered
+  output_covar = covar_labels + [new_covar_label]
+  output_contra = [lbl for i, lbl in enumerate(contra_labels) if i != index]
+  output_indices = ''.join(output_covar + output_contra)
+
+  einsum_str = f"...{input_indices},...{g_indices}->...{output_indices}"
+
+  g = metric.components.get_value_jet()
+
+  @jet_decorator
+  def apply_lower(components, g_vals):
+    return jnp.einsum(einsum_str, components, g_vals)
+
+  new_components = apply_lower(tensor.components.get_value_jet(), g)
+
+  return Tensor(
+    tensor_type=TensorType(k=k + 1, l=l - 1),
+    basis=tensor.basis,
+    components=new_components,
+  )

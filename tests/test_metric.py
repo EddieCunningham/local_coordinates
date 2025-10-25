@@ -1,6 +1,6 @@
 import jax.numpy as jnp
 import pytest
-from local_coordinates.metric import RiemannianMetric#, change_basis
+from local_coordinates.metric import RiemannianMetric, raise_index, lower_index
 from local_coordinates.tensor import change_basis
 # from local_coordinates.tensor import change_basis
 from local_coordinates.basis import BasisVectors, get_dual_basis_transform
@@ -95,3 +95,54 @@ def test_change_coordinates_metric_dual_basis():
   T_dual = get_dual_basis_transform(theta1, theta2).value
   expected = T_dual.T @ g @ T_dual
   assert jnp.allclose(metric2.components.value, expected)
+
+
+def test_raise_index_covector_to_vector():
+  # Basis
+  p = jnp.array([0., 0.])
+  basis = BasisVectors(p=p, components=Jet(value=jnp.eye(2), gradient=None, hessian=None, dim=2))
+
+  # Metric (nontrivial)
+  g = jnp.array([[2.0, 0.5], [0.5, 1.0]])
+  metric = RiemannianMetric(basis=basis, components=Jet(value=g, gradient=None, hessian=None, dim=2))
+
+  # Covector (k=1,l=0)
+  from local_coordinates.tensor import Tensor, TensorType
+  covec = jnp.array([1.0, -1.0])
+  covec_jet = Jet(value=covec, gradient=None, hessian=None, dim=2)
+  covec_tensor = Tensor(tensor_type=TensorType(k=1, l=0), basis=basis, components=covec_jet)
+
+  # Raise index 0 (the only covariant index)
+  raised = raise_index(covec_tensor, metric, index=0)
+
+  # Expected: v^i = g^{ij} alpha_j
+  g_inv = jnp.linalg.inv(g)
+  expected = g_inv @ covec
+
+  assert raised.tensor_type.k == 0 and raised.tensor_type.l == 1
+  assert jnp.allclose(raised.components.value, expected)
+
+
+def test_lower_index_vector_to_covector():
+  # Basis
+  p = jnp.array([0., 0.])
+  basis = BasisVectors(p=p, components=Jet(value=jnp.eye(2), gradient=None, hessian=None, dim=2))
+
+  # Metric (nontrivial)
+  g = jnp.array([[2.0, 0.5], [0.5, 1.0]])
+  metric = RiemannianMetric(basis=basis, components=Jet(value=g, gradient=None, hessian=None, dim=2))
+
+  # Vector (k=0,l=1)
+  from local_coordinates.tensor import Tensor, TensorType
+  vec = jnp.array([1.0, -1.0])
+  vec_jet = Jet(value=vec, gradient=None, hessian=None, dim=2)
+  vec_tensor = Tensor(tensor_type=TensorType(k=0, l=1), basis=basis, components=vec_jet)
+
+  # Lower index 0 (the only contravariant index)
+  lowered = lower_index(vec_tensor, metric, index=0)
+
+  # Expected: alpha_i = g_{ij} v^j
+  expected = g @ vec
+
+  assert lowered.tensor_type.k == 1 and lowered.tensor_type.l == 0
+  assert jnp.allclose(lowered.components.value, expected)
