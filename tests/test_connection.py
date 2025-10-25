@@ -7,6 +7,7 @@ from local_coordinates.jet import Jet
 from local_coordinates.metric import RiemannianMetric
 from local_coordinates.tensor import Tensor, TensorType
 from local_coordinates.tangent import TangentVector
+from local_coordinates.frame import Frame
 
 
 def create_random_basis(key: random.PRNGKey, dim: int) -> BasisVectors:
@@ -16,6 +17,48 @@ def create_random_basis(key: random.PRNGKey, dim: int) -> BasisVectors:
   grads = random.normal(grads_key, (dim, dim, dim))
   hessians = random.normal(hessians_key, (dim, dim, dim, dim))
   return BasisVectors(p=p, components=Jet(value=vals, gradient=grads, hessian=hessians))
+
+
+def test_covariant_derivative_uses_frame_directional_derivative_in_nonholonomic_basis():
+  # Construct a simple non-holonomic frame in R^2: E_1 = ∂_x, E_2 = ∂_y + x ∂_x
+  # Then for a vector field Y with components Y^k(x,y), E_2(Y^k) = ∂_y Y^k + x ∂_x Y^k.
+  p = jnp.array([0.3, -0.5])
+  d = 2
+  # Basis components E^a_i stacked as (a,i)
+  E_val = jnp.array([[1.0, 1.0 * p[0]],   # a=0 (x): E_1^x = 1, E_2^x = x
+                     [0.0, 1.0]])         # a=1 (y): E_1^y = 0, E_2^y = 1
+  E_grad = jnp.zeros((d, d, d))
+  # ∂_x E_2^x = 1, all others 0
+  E_grad = E_grad.at[0, 1, 0].set(1.0)
+  basis = BasisVectors(p=p, components=Jet(value=E_val, gradient=E_grad, hessian=jnp.zeros((d, d, d, d))))
+
+  # Zero connection
+  Gamma = jnp.zeros((d, d, d))
+  conn = Connection(basis=basis, christoffel_symbols=Jet(value=Gamma, gradient=None, hessian=None, dim=d))
+
+  # Choose X = E_2 (components (0,1) in the frame)
+  X = TangentVector(p=p, basis=basis, components=Jet(value=jnp.array([0.0, 1.0]), gradient=None, hessian=None, dim=d))
+
+  # Define a vector field Y with prescribed partials at p
+  # Y^x(x,y) = ax*x + ay*y + c  ⇒ ∂_x Y^x = ax, ∂_y Y^x = ay
+  # Y^y(x,y) = bx*x + by*y + d  ⇒ ∂_x Y^y = bx, ∂_y Y^y = by
+  ax, ay = 0.7, -0.2
+  bx, by = 0.4, 0.5
+  Y_val = jnp.array([1.2, -0.8])
+  Y_grad = jnp.array([[ax, ay],
+                      [bx, by]])
+  Y = TangentVector(p=p, basis=basis, components=Jet(value=Y_val, gradient=Y_grad, hessian=None))
+
+  out = conn.covariant_derivative(X, Y)
+
+  # Expected: (∇_{E2} Y)^k = E_2(Y^k) since Γ=0 and basis derivatives handled by E^a_i ∂_a
+  # E_2(Y^k) = ∂_y Y^k + x ∂_x Y^k evaluated at p[0] = x
+  x = p[0]
+  expected = jnp.array([
+    ay + x * ax,
+    by + x * bx,
+  ])
+  assert jnp.allclose(out.components.value, expected)
 
 
 def test_connection_basic_construction():

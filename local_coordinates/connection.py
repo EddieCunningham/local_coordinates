@@ -37,18 +37,20 @@ class Connection(AbstractBatchableObject):
 
     # Compute the covariant derivative
     @jet_decorator
-    def components(gamma_val, x_val, y_val, y_grad_val) -> Array:
-      # X^i Y^k_{,i} + Gamma^k_{ij} X^i Y^j
-      term1 = jnp.einsum("i,ki->k", x_val, y_grad_val)
+    def components(E_val, gamma_val, x_val, y_val, y_grad_val) -> Array:
+      # (∇_X Y)^k = X^i E_i(Y^k) + Γ^k_{ij} X^i Y^j,
+      # where E_i(Y^k) = E_i^a ∂_a Y^k.
+      term1 = jnp.einsum("i,ai,ka->k", x_val, E_val, y_grad_val)
       term2 = jnp.einsum("kij,i,j->k", gamma_val, x_val, y_val)
       return term1 + term2
 
+    E_value_jet = self.basis.components.get_value_jet()
     gamma_value_jet = self.christoffel_symbols.get_value_jet()
     x_value_jet = X.components.get_value_jet()
     y_value_jet = Y.components.get_value_jet()
     y_gradient_jet = Y.components.get_gradient_jet()
-    new_components = components(gamma_value_jet, x_value_jet, y_value_jet, y_gradient_jet)
-    return TangentVector(X.p, new_components, self.basis)
+    new_components = components(E_value_jet, gamma_value_jet, x_value_jet, y_value_jet, y_gradient_jet)
+    return TangentVector(self.basis.p, new_components, self.basis)
 
 @dispatch
 def change_basis(connection: Connection, new_basis: BasisVectors) -> Connection:
