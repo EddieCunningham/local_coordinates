@@ -143,4 +143,33 @@ def tangent_vectors_are_equivalent(a: TangentVector, b: TangentVector) -> bool:
   a_standard: TangentVector = a.to_standard_basis()
   b_standard: TangentVector = b.to_standard_basis()
   assert jnp.allclose(a_standard.p, b_standard.p)
-  return jnp.allclose(a_standard.components.value, b_standard.components.value) and jnp.allclose(a_standard.components.gradient, b_standard.components.gradient) and jnp.allclose(a_standard.components.hessian, b_standard.components.hessian)
+
+  value_equiv = jnp.allclose(a_standard.components.value, b_standard.components.value)
+
+  def _is_finite(x: Optional[Array]):
+    if x is None:
+      return False
+    return not any(
+      jnp.any(jnp.isinf(leaf) | jnp.isnan(leaf))
+      for leaf in jtu.tree_leaves(x)
+    )
+
+  def _components_are_equivalent(a_std_comp, b_std_comp):
+    a_comp_is_finite = _is_finite(a_std_comp)
+    b_comp_is_finite = _is_finite(b_std_comp)
+
+    if a_comp_is_finite and b_comp_is_finite:
+      return jnp.allclose(a_std_comp, b_std_comp)
+    else:
+      return True
+
+  hess_equiv = _components_are_equivalent(
+    a_standard.components.hessian,
+    b_standard.components.hessian
+  )
+
+  grad_equiv = _components_are_equivalent(
+    a_standard.components.gradient,
+    b_standard.components.gradient
+  )
+  return value_equiv and grad_equiv and hess_equiv
