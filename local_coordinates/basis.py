@@ -73,8 +73,7 @@ def apply_covariant_transform(T: Jet, old_basis_components: Jet) -> Jet:
   """
   @jet_decorator
   def apply_transform(T_val: Array, x_components: Array) -> Array:
-    inv_T = jnp.linalg.inv(T_val)
-    return jnp.einsum("...i,ij->...j", x_components, inv_T)
+    return jnp.vectorize(jnp.linalg.solve, signature="(n,n),(n)->(n)")(T_val.mT, x_components)
 
   new_basis_components: Jet = apply_transform(T.get_value_jet(), old_basis_components.get_value_jet())
   return new_basis_components
