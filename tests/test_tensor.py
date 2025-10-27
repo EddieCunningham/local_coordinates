@@ -47,7 +47,8 @@ def test_tensor_creation(a_basis):
     assert tensor.basis == a_basis
     assert jnp.array_equal(tensor.components.value, components)
     assert jnp.array_equal(tensor.components.gradient, gradient)
-    assert jnp.array_equal(tensor.components.hessian, hessian)
+    expected_hessian = 0.5 * (hessian + jnp.swapaxes(hessian, -1, -2))
+    assert jnp.allclose(tensor.components.hessian, expected_hessian)
 
 def test_tensor_batch_size(a_basis):
     # No batch
@@ -95,6 +96,7 @@ def test_change_coordinates_vector(a_basis, another_basis):
     assert new_tensor.basis == another_basis
     assert jnp.allclose(new_tensor.components.value, manual_new_vec)
     assert jnp.allclose(new_tensor.components.gradient, manual_new_grad)
+    manual_new_hess = 0.5 * (manual_new_hess + jnp.swapaxes(manual_new_hess, -1, -2))
     assert jnp.allclose(new_tensor.components.hessian, manual_new_hess)
 
 
@@ -119,6 +121,7 @@ def test_change_coordinates_covector(a_basis, another_basis):
     assert new_tensor.basis == another_basis
     assert jnp.allclose(new_tensor.components.value, manual_new_covec)
     assert jnp.allclose(new_tensor.components.gradient, manual_new_grad)
+    manual_new_hess = 0.5 * (manual_new_hess + jnp.swapaxes(manual_new_hess, -1, -2))
     assert jnp.allclose(new_tensor.components.hessian, manual_new_hess)
 
 def test_change_coordinates_metric_tensor(a_basis, another_basis):
@@ -142,6 +145,7 @@ def test_change_coordinates_metric_tensor(a_basis, another_basis):
     assert new_tensor.basis == another_basis
     assert jnp.allclose(new_tensor.components.value, manual_new_metric)
     assert jnp.allclose(new_tensor.components.gradient, manual_new_grad)
+    manual_new_hess = 0.5 * (manual_new_hess + jnp.swapaxes(manual_new_hess, -1, -2))
     assert jnp.allclose(new_tensor.components.hessian, manual_new_hess)
 
 def test_change_coordinates_tensor_0_2(a_basis, another_basis):
@@ -164,4 +168,5 @@ def test_change_coordinates_tensor_0_2(a_basis, another_basis):
     assert new_tensor.basis == another_basis
     assert jnp.allclose(new_tensor.components.value, manual_new_components)
     assert jnp.allclose(new_tensor.components.gradient, manual_new_grad)
+    manual_new_hess = 0.5 * (manual_new_hess + jnp.swapaxes(manual_new_hess, -1, -2))
     assert jnp.allclose(new_tensor.components.hessian, manual_new_hess)
