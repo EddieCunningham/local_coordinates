@@ -112,8 +112,8 @@ def test_raise_index_covector_to_vector():
   covec_jet = Jet(value=covec, gradient=None, hessian=None, dim=2)
   covec_tensor = Tensor(tensor_type=TensorType(k=1, l=0), basis=basis, components=covec_jet)
 
-  # Raise index 0 (the only covariant index)
-  raised = raise_index(covec_tensor, metric, index=0)
+  # Raise overall index 1 (the only covariant index)
+  raised = raise_index(covec_tensor, metric, index=1)
 
   # Expected: v^i = g^{ij} alpha_j
   g_inv = jnp.linalg.inv(g)
@@ -138,8 +138,8 @@ def test_lower_index_vector_to_covector():
   vec_jet = Jet(value=vec, gradient=None, hessian=None, dim=2)
   vec_tensor = Tensor(tensor_type=TensorType(k=0, l=1), basis=basis, components=vec_jet)
 
-  # Lower index 0 (the only contravariant index)
-  lowered = lower_index(vec_tensor, metric, index=0)
+  # Lower overall index 1 (the only contravariant index)
+  lowered = lower_index(vec_tensor, metric, index=1)
 
   # Expected: alpha_i = g_{ij} v^j
   expected = g @ vec
