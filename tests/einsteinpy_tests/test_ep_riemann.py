@@ -4,7 +4,7 @@ from einsteinpy.symbolic import MetricTensor, ChristoffelSymbols, RiemannCurvatu
 from sympy import symbols, sin, cos
 import sympy
 
-from local_coordinates.metric import RiemannianMetric
+from local_coordinates.metric import RiemannianMetric, lower_index
 from local_coordinates.basis import get_standard_basis
 from local_coordinates.jet import function_to_jet
 from local_coordinates.connection import get_levi_civita_connection
@@ -58,6 +58,10 @@ def test_riemann_curvature_tensor():
   lc_riemann = get_riemann_curvature_tensor(lc_connection)
 
   # 7. Compare the results
+  # Our tensor stores indices as R_{ijk}^m with order (i,j,k,m)
+  # EinsteinPy uses R^t{}_{s r n} with order (t,s,r,n)
+  # Correct alignment is t=m, s=k, r=i, n=j → transpose (3,2,0,1)
+  lc_R_upper_first = lc_riemann.components.value.transpose((3, 2, 0, 1))
   np.testing.assert_allclose(
-    lc_riemann.components.value, ep_riemann_comps, rtol=1e-5, atol=1e-5
+    lc_R_upper_first, ep_riemann_comps, rtol=1e-5, atol=1e-5
   )
