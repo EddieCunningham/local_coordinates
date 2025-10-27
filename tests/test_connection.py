@@ -478,3 +478,42 @@ def test_levi_civita_connection_is_metric_compatible():
     assert jnp.allclose(comp.gradient, 0.0)
     # assert jnp.allclose(comp.hessian, 0.0) # Don't have enough information to check hessian
 
+def test_covariant_hessian():
+    key = random.PRNGKey(0)
+    dim = 5
+    metric = create_random_metric(key, dim)
+    connection = get_levi_civita_connection(metric)
+
+    k1, k2, k3 = random.split(key, 3)
+    X = create_random_vector_field(k1, dim)
+    Y = create_random_vector_field(k2, dim)
+    Z = create_random_vector_field(k3, dim)
+    X = change_basis(X, metric.basis)
+    Y = change_basis(Y, metric.basis)
+    Z = change_basis(Z, metric.basis)
+
+    def covariant_hessian(X: TangentVector, Y: TangentVector, Z: TangentVector) -> TangentVector:
+      nablaY_Z = connection.covariant_derivative(Y, Z)
+      nablaX_Y = connection.covariant_derivative(X, Y)
+      term1 = connection.covariant_derivative(X, nablaY_Z)
+      term2 = connection.covariant_derivative(nablaX_Y, Z)
+      return term1 - term2
+
+    # LHS
+    nabla2XY_Z = covariant_hessian(X, Y, Z)
+    nabla2YX_Z = covariant_hessian(Y, X, Z)
+    R_XYZ = nabla2XY_Z - nabla2YX_Z
+
+    # RHS
+    nablaY_Z = connection.covariant_derivative(Y, Z)
+    nablaX_Z = connection.covariant_derivative(X, Z)
+    nablaX_nablaY_Z = connection.covariant_derivative(X, nablaY_Z)
+    nablaY_nablaX_Z = connection.covariant_derivative(Y, nablaX_Z)
+
+    bracket_XY = lie_bracket(X, Y)
+    nabla_bracket_XY_Z = connection.covariant_derivative(bracket_XY, Z)
+
+    R_XYZ2 = nablaX_nablaY_Z - nablaY_nablaX_Z - nabla_bracket_XY_Z
+
+    assert jnp.allclose(R_XYZ.components.value, R_XYZ2.components.value)
+
