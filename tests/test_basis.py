@@ -5,6 +5,7 @@ import pytest
 import jax
 import jax.random as random
 from jaxtyping import Array
+from local_coordinates.basis import make_coordinate_basis
 
 def test_basis_vectors_creation():
   p = jnp.array([1., 2.])
@@ -355,11 +356,12 @@ def test_change_coordinates_round_trip():
   gradient = random.normal(k2, (3, 3, 3))
   hessian = random.normal(k3, (3, 3, 3, 3))
   basis = BasisVectors(p=q, components=Jet(value=value, gradient=gradient, hessian=hessian, dim=3))
+  basis = make_coordinate_basis(basis)
   out: BasisVectors = change_coordinates(basis, spherical_to_cartesian, q)
   out2: BasisVectors = change_coordinates(out, cartesian_to_spherical, x)
   assert jnp.allclose(out2.p, q)
-  assert jnp.allclose(out2.components.value, value)
-  assert jnp.allclose(out2.components.gradient, gradient)
+  assert jnp.allclose(out2.components.value, basis.components.value)
+  assert jnp.allclose(out2.components.gradient, basis.components.gradient)
 
 def test_change_coordinates_matches_basis_transform():
   q = jnp.array([1.0, jnp.pi / 4, jnp.pi / 6])

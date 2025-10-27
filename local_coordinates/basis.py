@@ -140,3 +140,31 @@ def change_basis(obj: Any, target_basis: BasisVectors) -> Any:
   Change the basis of an object to a new basis.
   """
   pass
+
+def make_coordinate_basis(basis: BasisVectors) -> BasisVectors:
+  """
+  Make a commuting frame (a coordinate basis) from a given basis.
+
+  This function takes a set of basis vectors (a frame) and their derivatives,
+  and returns a new BasisVectors object representing a commuting frame. It
+  does this by enforcing the Frobenius integrability condition, [E_j, E_k] = 0,
+  which is equivalent to symmetrizing the derivatives of the frame vectors
+  when expressed in the frame's own basis.
+
+  The frame vectors themselves are not changed, only their derivatives are
+  projected onto the symmetric part.
+  """
+  p = basis.p
+  frame = basis.components.value
+  dframe_dx = basis.components.gradient
+
+  if dframe_dx is None:
+    raise ValueError(
+      "Cannot make a coordinate basis without second derivatives "
+      "(i.e., the hessian of the jet)."
+    )
+
+  # Create a new Jet with the original point and frame, but new derivatives.
+  new_jet = Jet(value=frame, gradient=0.5*(dframe_dx + jnp.swapaxes(dframe_dx, -2, -1)), hessian=None)
+
+  return BasisVectors(p=p, components=new_jet)
