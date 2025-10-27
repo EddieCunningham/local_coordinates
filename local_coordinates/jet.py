@@ -114,7 +114,7 @@ class Jet(AbstractBatchableObject):
 
     # Set hessian: use provided, otherwise fill only if dim is given; else leave as None.
     if hessian is not None:
-      self.hessian = hessian
+      self.hessian = 0.5*(hessian + jnp.swapaxes(hessian, -1, -2))
     else:
       self.hessian = None if dim is None else inf_like_value_with_trailing((dim, dim))
 
