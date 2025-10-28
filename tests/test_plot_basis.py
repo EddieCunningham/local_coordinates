@@ -8,7 +8,8 @@ import matplotlib.pyplot as plt
 
 from local_coordinates.jet import Jet
 from local_coordinates.basis import BasisVectors
-from local_coordinates.plot_basis import plot_coordinate_grid
+from local_coordinates.plot_basis import plot_coordinate_grid, plot_flow_grid
+from local_coordinates.curved_flow import SecondOrderFlow, ThirdOrderFlow
 
 
 def test_plot_coordinate_grid_identity_basis(tmp_path):
@@ -72,6 +73,37 @@ def test_plot_coordinate_grid_random_basis(tmp_path):
   savepath = tmp_path / 'grid_random.png'
   fig, ax = plot_coordinate_grid(basis, num=7, span=1.0, savepath=str(savepath), title='random')
 
+  assert os.path.exists(savepath)
+  assert os.path.getsize(savepath) > 0
+  plt.close(fig)
+
+
+def test_plot_flow_grid_quadratic(tmp_path):
+  key = jax.random.PRNGKey(0)
+  N = 2
+  k1, k2 = jax.random.split(key)
+  J = jax.random.normal(k1, (N, N))
+  H = jax.random.normal(k2, (N, N, N))
+  flow = SecondOrderFlow(J=J, H=H)
+
+  savepath = tmp_path / 'flow_quadratic.png'
+  fig, ax = plot_flow_grid(flow, num=9, span=1.0, savepath=str(savepath), title='flow_quad', show=False)
+  assert os.path.exists(savepath)
+  assert os.path.getsize(savepath) > 0
+  plt.close(fig)
+
+
+def test_plot_flow_grid_third_order(tmp_path):
+  key = jax.random.PRNGKey(1)
+  N = 2
+  k1, k2, k3 = jax.random.split(key, 3)
+  J = jax.random.normal(k1, (N, N))
+  H = jax.random.normal(k2, (N, N, N))
+  T = jax.random.normal(k3, (N, N, N, N))
+  flow = ThirdOrderFlow(J=J, H=H, T=T)
+
+  savepath = tmp_path / 'flow_third_order.png'
+  fig, ax = plot_flow_grid(flow, num=9, span=1.0, savepath=str(savepath), title='flow_third', show=False)
   assert os.path.exists(savepath)
   assert os.path.getsize(savepath) > 0
   plt.close(fig)
