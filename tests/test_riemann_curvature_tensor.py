@@ -108,4 +108,31 @@ def test_riemann_symmetries():
   # First Bianchi identity
   assert jnp.allclose(R + R.transpose((0, 2, 3, 1)) + R.transpose((0, 3, 1, 2)), 0.0)
 
+def test_ricci_scalar_basis_independence():
+  """
+  Tests that the Ricci scalar is independent of the basis chosen.
+  """
+  key = random.PRNGKey(42)
+  dim = 5
+  metric = create_random_metric(key, dim)
+  connection = get_levi_civita_connection(metric)
+  riemann_tensor = get_riemann_curvature_tensor(connection)
 
+  metric_standard = change_basis(metric, get_standard_basis(metric.basis.p))
+  riemann_tensor_standard = get_riemann_curvature_tensor(get_levi_civita_connection(metric_standard))
+
+
+  # Lower the upper index: R_{ijkl}
+  R_lower = lower_index(riemann_tensor, metric, 4)
+  R = R_lower.components.value  # (i,j,k,l)
+  g = metric.components.value   # (i,j)
+  g_inv = jnp.linalg.inv(g)
+  scalar_curvature = jnp.einsum("ijkl,il,jk->", R, g_inv, g_inv)
+
+  R_lower_standard = lower_index(riemann_tensor_standard, metric_standard, 4)
+  R_standard = R_lower_standard.components.value  # (i,j,k,l)
+  g_standard = metric_standard.components.value   # (i,j)
+  g_inv_standard = jnp.linalg.inv(g_standard)
+  scalar_curvature_standard = jnp.einsum("ijkl,il,jk->", R_standard, g_inv_standard, g_inv_standard)
+
+  assert jnp.allclose(scalar_curvature, scalar_curvature_standard)
