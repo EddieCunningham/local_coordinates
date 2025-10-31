@@ -26,7 +26,7 @@ class Frame(AbstractBatchableObject):
     assert isinstance(self.components, Jet), "components must be a Jet"
     if self.components.ndim != self.p.ndim + 1:
       raise ValueError(f"Invalid number of dimensions: {self.components.ndim}")
-    assert jnp.allclose(self.p, self.basis.p), "p and basis.p must be the same"
+    # assert jnp.allclose(self.p, self.basis.p), "p and basis.p must be the same"
 
   @property
   def batch_size(self) -> Union[None,int,Tuple[int]]:

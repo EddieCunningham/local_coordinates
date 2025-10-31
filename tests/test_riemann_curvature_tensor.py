@@ -136,3 +136,48 @@ def test_ricci_scalar_basis_independence():
   scalar_curvature_standard = jnp.einsum("ijkl,il,jk->", R_standard, g_inv_standard, g_inv_standard)
 
   assert jnp.allclose(scalar_curvature, scalar_curvature_standard)
+
+
+def test_kretschmann_zero_iff_flat_and_basis_invariant():
+  """
+  Kretschmann scalar K = R_{abcd} R^{abcd} is:
+  - Nonnegative and coordinate-free
+  - Zero iff the full Riemann tensor vanishes
+
+  For the Euclidean metric (identity components), curvature must vanish.
+  We compute K and verify it is ~0, that Riemann is ~0, and that K is
+  invariant under change of basis to the standard basis.
+  """
+  key = random.PRNGKey(0)
+  dim = 4
+
+  # Build a truly flat metric: identity components in the standard basis
+  p = jnp.zeros(dim)
+  metric = RiemannianMetric(basis=get_standard_basis(p), components=get_identity_jet(dim))
+  connection = get_levi_civita_connection(metric)
+  riemann_tensor = get_riemann_curvature_tensor(connection)
+
+  # Lower the upper index to get R_{ijkl}
+  R_lower = lower_index(riemann_tensor, metric, 4)
+  R = R_lower.components.value  # (i,j,k,l)
+  g = metric.components.value   # (i,j)
+  g_inv = jnp.linalg.inv(g)
+
+  # Kretschmann scalar K = R_{ijkl} R_{abcd} g^{ia} g^{jb} g^{kc} g^{ld}
+  K = jnp.einsum("ijkl,abcd,ia,jb,kc,ld->", R, R, g_inv, g_inv, g_inv, g_inv)
+
+  # In a flat Euclidean metric, curvature must vanish
+  assert jnp.allclose(K, 0.0)
+  assert jnp.allclose(R, 0.0)
+
+  # Basis invariance: transform to a random smooth basis and recompute K
+  metric_std = change_basis(metric, create_random_basis(key, dim))
+  connection_std = get_levi_civita_connection(metric_std)
+  riemann_std = get_riemann_curvature_tensor(connection_std)
+  R_lower_std = lower_index(riemann_std, metric_std, 4)
+  R_std = R_lower_std.components.value
+  g_std = metric_std.components.value
+  g_inv_std = jnp.linalg.inv(g_std)
+  K_std = jnp.einsum("ijkl,abcd,ia,jb,kc,ld->", R_std, R_std, g_inv_std, g_inv_std, g_inv_std, g_inv_std)
+
+  assert jnp.allclose(K, K_std)

@@ -127,5 +127,3 @@ def test_third_order_flow_grid_eval():
 
   assert outputs.shape == (n * n, N)
   assert jnp.all(jnp.isfinite(outputs))
-
-  import pdb; pdb.set_trace()

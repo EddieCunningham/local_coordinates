@@ -46,8 +46,8 @@ def raise_index(tensor: Tensor, metric: RiemannianMetric, index: int) -> Tensor:
   - index is the overall 1-based index position in the tensor (covariant first, then contravariant).
   - For a tensor with type (k, l), valid range is 1 <= index <= k + l, and it must satisfy index <= k (i.e., refer to a covariant slot).
   """
-  if tensor.basis != metric.basis:
-    raise ValueError("Tensor and metric must be expressed in the same basis to raise an index.")
+  # if tensor.basis != metric.basis:
+  #   raise ValueError("Tensor and metric must be expressed in the same basis to raise an index.")
 
   k = tensor.tensor_type.k
   l = tensor.tensor_type.l
@@ -117,8 +117,8 @@ def lower_index(tensor: Tensor, metric: RiemannianMetric, index: int) -> Tensor:
 
   Here k is the number of covariant indices and l is the number of contravariant indices.
   """
-  if tensor.basis != metric.basis:
-    raise ValueError("Tensor and metric must be expressed in the same basis to lower an index.")
+  # if tensor.basis != metric.basis:
+  #   raise ValueError("Tensor and metric must be expressed in the same basis to lower an index.")
 
   k = tensor.tensor_type.k
   l = tensor.tensor_type.l

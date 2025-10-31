@@ -41,15 +41,18 @@ class SecondOrderFlow(AbstractBatchableObject):
   def __call__(self, z: Float[Array, "N"]) -> Float[Array, "N"]:
     return self.J@z + 0.5*jnp.einsum("kij,i,j->k", self.H, z, z)
 
+  def get_jacobian(self, z: Float[Array, "N"]) -> Float[Array, "N N"]:
+    return self.J + jnp.einsum("kij,j->ki", self.H, z)
+
   def get_metric(self, z: Float[Array, "N"]) -> RiemannianMetric:
     dxdz = self.J + jnp.einsum("kij,j->ki", self.H, z)
     d2xdz2 = self.H
 
     # Get the metric components
-    metric_components_z = Jet(value=dxdz, gradient=d2xdz2, hessian=None, dim=self.J.shape[-1])
-    metric_components_x = change_coordinates(metric_components_z, self, z)
+    basis_components_z = Jet(value=dxdz, gradient=d2xdz2, hessian=None, dim=self.J.shape[-1])
+    basis_components_x = change_coordinates(basis_components_z, self, z)
     x = self.__call__(z)
-    basis = BasisVectors(p=x, components=metric_components_x)
+    basis = BasisVectors(p=x, components=basis_components_x)
     metric = RiemannianMetric(basis=basis, components=get_identity_jet(self.J.shape[-1], dtype=z.dtype))
     return metric
 
@@ -94,15 +97,24 @@ class ThirdOrderFlow(AbstractBatchableObject):
   def __call__(self, z: Float[Array, "N"]) -> Float[Array, "N"]:
     return self.J@z + 0.5*jnp.einsum("lij,i,j->l", self.H, z, z) + 1/6*jnp.einsum("lijk,i,j,k->l", self.T, z, z, z)
 
-  def get_metric(self, z: Float[Array, "N"]) -> RiemannianMetric:
-    dxdz = self.J + jnp.einsum("kij,j->ki", self.H, z) + 0.5*jnp.einsum("lijk,j,k->li", self.T, z, z)
-    d2xdz2 = self.H + jnp.einsum("lijk,j,k->lij", self.T, z, z)
-    d3xdz3 = self.T
+  def get_jacobian(self, z: Float[Array, "N"]) -> Float[Array, "N N"]:
+    return self.J + jnp.einsum("kij,j->ki", self.H, z) + 0.5*jnp.einsum("lijk,j,k->li", self.T, z, z)
 
-    # Get the metric components
-    metric_components_z = Jet(value=dxdz, gradient=d2xdz2, hessian=d3xdz3, dim=self.J.shape[-1])
-    metric_components_x = change_coordinates(metric_components_z, self, z)
+  def get_hessian(self, z: Float[Array, "N"]) -> Float[Array, "N N N"]:
+    return self.H + jnp.einsum("lijk,j,k->lij", self.T, z, z)
+
+  def get_tressian(self, z: Float[Array, "N"]) -> Float[Array, "N N N N"]:
+    return self.T
+
+  def get_metric(self, z: Float[Array, "N"]) -> RiemannianMetric:
+    dxdz = self.get_jacobian(z)
+    d2xdz2 = self.get_hessian(z)
+    d3xdz3 = self.get_tressian(z)
+
+    # Get the metric basis components
+    basis_components_z = Jet(value=dxdz, gradient=d2xdz2, hessian=d3xdz3, dim=self.J.shape[-1])
+    basis_components_x = change_coordinates(basis_components_z, self, z)
     x = self.__call__(z)
-    basis = BasisVectors(p=x, components=metric_components_x)
+    basis = BasisVectors(p=x, components=basis_components_x)
     metric = RiemannianMetric(basis=basis, components=get_identity_jet(self.J.shape[-1], dtype=z.dtype))
     return metric
