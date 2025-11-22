@@ -1,6 +1,7 @@
 import jax
 import jax.numpy as jnp
 import pytest
+from local_coordinates.jacobian import Jacobian
 from local_coordinates.jet import Jet, function_to_jet, change_coordinates
 from local_coordinates.jet import jet_decorator
 import jax.tree_util as jtu
@@ -908,6 +909,37 @@ def test_change_coordinates_matches_composed_function():
     assert jnp.allclose(jet_z.value, jet_z_direct.value, atol=1e-6, rtol=1e-6)
     assert jnp.allclose(jet_z.gradient, jet_z_direct.gradient, atol=1e-5, rtol=1e-5)
     assert jnp.allclose(jet_z.hessian, jet_z_direct.hessian, atol=2e-5, rtol=2e-5)
+
+
+def test_change_coordinates_with_jacobian_matches_function_based():
+    # Base point and its spherical coordinates
+    x = jnp.array([0.8, 1.1, -0.6])
+    z = cartesian_to_spherical(x)
+
+    # Vector-valued F for a stronger test
+    def F(xvec):
+        return jnp.array([
+            xvec[0]**2 + xvec[1],
+            jnp.sin(xvec[1]) * xvec[2],
+            jnp.exp(xvec[0]) + xvec[2]**2,
+        ])
+
+    # Jet in x-coordinates
+    jet_x = function_to_jet(F, x)
+
+    # Transform via function-based change_coordinates
+    jet_z_func = change_coordinates(jet_x, cartesian_to_spherical, x)
+
+    # Build Jacobian J[z](x) and use the Jacobian-based overload
+    dzdx = jax.jacrev(cartesian_to_spherical)(x)
+    d2zdx2 = jax.jacfwd(jax.jacrev(cartesian_to_spherical))(x)
+    J_z = Jacobian(p=x, value=dzdx, gradient=d2zdx2, hessian=None)
+
+    jet_z_jac = change_coordinates(jet_x, J_z)
+
+    assert jnp.allclose(jet_z_jac.value, jet_z_func.value, atol=1e-6, rtol=1e-6)
+    assert jnp.allclose(jet_z_jac.gradient, jet_z_func.gradient, atol=1e-5, rtol=1e-5)
+    assert jnp.allclose(jet_z_jac.hessian, jet_z_func.hessian, atol=2e-5, rtol=2e-5)
 
 
 def test_jet_decorator_empty_pytree_components():

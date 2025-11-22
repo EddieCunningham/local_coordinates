@@ -10,6 +10,7 @@ from linsdex import AbstractBatchableObject, auto_vmap
 from plum import dispatch
 from functools import partial, wraps
 import inspect
+from local_coordinates.jacobian import Jacobian
 
 # Optional sensitivity probing (used-groups detection) toggle.
 # If False, all Jet argument groups are treated as used.
@@ -702,6 +703,52 @@ def change_coordinates(
   dzdx = jax.jacrev(x_to_z)(x)
   assert dzdx.shape == (x.shape[0], x.shape[0]), "dzdx should be a square matrix"
   d2zdx2 = jax.jacfwd(jax.jacrev(x_to_z))(x)
+  dxdz = jnp.linalg.inv(dzdx)
+
+  dFpdz = jnp.einsum("...a,ai->...i", dFpdx, dxdz)
+
+  hess_inner_term1 = jnp.einsum("cbd,...c->...bd", d2zdx2, dFpdz)
+  hess_inner_term = -hess_inner_term1 + d2Fpdx2
+
+  d2Fpdz2 = jnp.einsum("...db,bj,di->...ij", hess_inner_term, dxdz, dxdz)
+
+  return Jet(value=Fp, gradient=dFpdz, hessian=d2Fpdz2)
+
+
+@dispatch
+def change_coordinates(
+  jet: Jet,
+  jacobian: Jacobian,
+) -> Jet:
+  """
+  Change coordinates for a Jet using a precomputed Jacobian J[z](x).
+
+  The Jacobian object encodes
+    - value[a, i]   = ∂z^a / ∂x^i,
+    - gradient[a, i, j] = ∂²z^a / ∂x^i ∂x^j,
+  at the point x = jacobian.p.
+
+  Given J[F]_p in x-coordinates, this returns J[F]_p expressed in z-coordinates
+  using the same formulas as the function-based change_coordinates overload.
+  """
+  Fp = jet.value
+  dFpdx = jet.gradient
+  d2Fpdx2 = jet.hessian
+
+  if dFpdx is None or d2Fpdx2 is None:
+    raise ValueError("change_coordinates(jet, jacobian) requires jet to have gradient and hessian.")
+
+  dzdx = jacobian.value
+  dim = dzdx.shape[0]
+
+  if dzdx.shape != (dim, dim):
+    raise ValueError(f"Jacobian value must be square of shape (N, N), got {dzdx.shape}.")
+
+  if jacobian.gradient is None:
+    d2zdx2 = jnp.zeros((dim, dim, dim), dtype=dzdx.dtype)
+  else:
+    d2zdx2 = jacobian.gradient
+
   dxdz = jnp.linalg.inv(dzdx)
 
   dFpdz = jnp.einsum("...a,ai->...i", dFpdx, dxdz)
