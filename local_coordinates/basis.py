@@ -9,6 +9,7 @@ from linsdex import AbstractBatchableObject, auto_vmap
 from functools import partial
 from plum import dispatch
 from local_coordinates.jet import Jet, jet_decorator
+from local_coordinates.jacobian import Jacobian, get_inverse
 import warnings
 
 class BasisVectors(AbstractBatchableObject):
@@ -121,17 +122,131 @@ def get_standard_dual_basis(p: Float[Array, "N"]) -> BasisVectors:
   """
   return BasisVectors(p=p, components=Jet(value=jnp.eye(p.shape[0]), gradient=jnp.zeros((p.shape[0], p.shape[0], p.shape[0])), hessian=jnp.zeros((p.shape[0], p.shape[0], p.shape[0], p.shape[0]))))
 
+
+@dispatch
+def change_coordinates(
+  basis: BasisVectors,
+  x_to_z_jacobian: Jacobian
+) -> BasisVectors:
+  """
+  Change the coordinates of a basis vectors from one set of coordinates to another.
+  """
+  # Dimension
+  dim = x_to_z_jacobian.value.shape[0]
+
+  # Inverse Jacobian for x(z)
+  z_to_x_jacobian = get_inverse(x_to_z_jacobian)
+  X = z_to_x_jacobian.value            # X[i, a]   = ∂x^i / ∂z^a
+  X2 = z_to_x_jacobian.gradient        # X2[i, a, b] = ∂²x^i / ∂z^a ∂z^b
+  X3 = z_to_x_jacobian.hessian         # X3[i, a, b, c] = ∂³x^i / ∂z^a ∂z^b ∂z^c
+
+  # Original basis components and their derivatives in x-coordinates
+  E = basis.components.value        # (j, i)
+  dE_dx = basis.components.gradient # (j, i, k) or None
+  d2E_dx2 = basis.components.hessian # (j, i, k, l) or None
+
+  # Treat missing derivatives as zero (no variation w.r.t coordinates)
+  if dE_dx is None:
+    dE_dx = jnp.zeros((E.shape[0], dim, dim), dtype=E.dtype)
+  if d2E_dx2 is None:
+    d2E_dx2 = jnp.zeros((E.shape[0], dim, dim, dim), dtype=E.dtype)
+
+  if X2 is None:
+    X2 = jnp.zeros((dim, dim, dim), dtype=X.dtype)
+  if X3 is None:
+    X3 = jnp.zeros((dim, dim, dim, dim), dtype=X.dtype)
+
+  # Value: Ẽ^a_j = E^i_j X^i_a
+  new_value = jnp.einsum("ji,ia->ja", E, X)
+
+  # First derivatives:
+  # ∂_b Ẽ^a_j = (∂E^i_j/∂x^k) X^k_b X^i_a + E^i_j X2^i_{ab}
+  term1_grad = jnp.einsum("jik,kb,ia->jab", dE_dx, X, X)
+  term2_grad = jnp.einsum("ji,iab->jab", E, X2)
+  new_gradient = term1_grad + term2_grad
+
+  # Second derivatives:
+  # ∂_c∂_b Ẽ^a_j =
+  #   (∂²E^i_j/∂x^k∂x^l) X^l_c X^k_b X^i_a
+  # + (∂E^i_j/∂x^k) X2^k_{bc} X^i_a
+  # + (∂E^i_j/∂x^k) X^k_b X2^i_{ac}
+  # + (∂E^i_j/∂x^l) X^l_c X2^i_{ab}
+  # + E^i_j X3^i_{abc}
+  term1_hess = jnp.einsum("jikl,lc,kb,ia->jabc", d2E_dx2, X, X, X)
+  term2_hess = jnp.einsum("jik,kbc,ia->jabc", dE_dx, X2, X)
+  term3_hess = jnp.einsum("jik,kb,iac->jabc", dE_dx, X, X2)
+  term4_hess = jnp.einsum("jil,lc,iab->jabc", dE_dx, X, X2)
+  term5_hess = jnp.einsum("ji,iabc->jabc", E, X3)
+  new_hessian = term1_hess + term2_hess + term3_hess + term4_hess + term5_hess
+
+  z_components = Jet(value=new_value, gradient=new_gradient, hessian=new_hessian)
+  return BasisVectors(p=basis.p, components=z_components)
+
+
 @dispatch
 def change_coordinates(basis: BasisVectors, x_to_z: Callable[[Array], Array], x: Array) -> BasisVectors:
   """
   Change the coordinates of a basis vectors from one set of coordinates to another.
   """
-  if basis.components.hessian is not None:
-    warnings.warn("The Hessian transform is not implemented for change_coordinates of BasisVectors.")
-  x_jet = Jet(value=x, gradient=basis.components.value, hessian=basis.components.gradient)
-  z_jet: Jet = change_coordinates(x_jet, x_to_z, x)
+  # Basepoint in old coordinates
+  x = jnp.asarray(x)
   z = x_to_z(x)
-  z_components = Jet(value=z_jet.gradient, gradient=z_jet.hessian, hessian=None)
+
+  # Dimension
+  dim = x.shape[0]
+
+  # Build Jacobian of the coordinate change z(x) up to third order
+  dzdx = jax.jacrev(x_to_z)(x)                       # (a, i)
+  d2zdx2 = jax.jacfwd(jax.jacrev(x_to_z))(x)         # (a, i, j)
+  d3zdx3 = jax.jacfwd(jax.jacfwd(jax.jacrev(x_to_z)))(x)  # (a, i, j, k)
+  J_zx = Jacobian(value=dzdx, gradient=d2zdx2, hessian=d3zdx3)
+
+  # Inverse Jacobian for x(z)
+  J_xz = get_inverse(J_zx)
+  X = J_xz.value            # X[i, a]   = ∂x^i / ∂z^a
+  X2 = J_xz.gradient        # X2[i, a, b] = ∂²x^i / ∂z^a ∂z^b
+  X3 = J_xz.hessian         # X3[i, a, b, c] = ∂³x^i / ∂z^a ∂z^b ∂z^c
+
+  # Original basis components and their derivatives in x-coordinates
+  E = basis.components.value        # (j, i)
+  dE_dx = basis.components.gradient # (j, i, k) or None
+  d2E_dx2 = basis.components.hessian # (j, i, k, l) or None
+
+  # Treat missing derivatives as zero (no variation w.r.t coordinates)
+  if dE_dx is None:
+    dE_dx = jnp.zeros((E.shape[0], dim, dim), dtype=E.dtype)
+  if d2E_dx2 is None:
+    d2E_dx2 = jnp.zeros((E.shape[0], dim, dim, dim), dtype=E.dtype)
+
+  if X2 is None:
+    X2 = jnp.zeros((dim, dim, dim), dtype=X.dtype)
+  if X3 is None:
+    X3 = jnp.zeros((dim, dim, dim, dim), dtype=X.dtype)
+
+  # Value: Ẽ^a_j = E^i_j X^i_a
+  new_value = jnp.einsum("ji,ia->ja", E, X)
+
+  # First derivatives:
+  # ∂_b Ẽ^a_j = (∂E^i_j/∂x^k) X^k_b X^i_a + E^i_j X2^i_{ab}
+  term1_grad = jnp.einsum("jik,kb,ia->jab", dE_dx, X, X)
+  term2_grad = jnp.einsum("ji,iab->jab", E, X2)
+  new_gradient = term1_grad + term2_grad
+
+  # Second derivatives:
+  # ∂_c∂_b Ẽ^a_j =
+  #   (∂²E^i_j/∂x^k∂x^l) X^l_c X^k_b X^i_a
+  # + (∂E^i_j/∂x^k) X2^k_{bc} X^i_a
+  # + (∂E^i_j/∂x^k) X^k_b X2^i_{ac}
+  # + (∂E^i_j/∂x^l) X^l_c X2^i_{ab}
+  # + E^i_j X3^i_{abc}
+  term1_hess = jnp.einsum("jikl,lc,kb,ia->jabc", d2E_dx2, X, X, X)
+  term2_hess = jnp.einsum("jik,kbc,ia->jabc", dE_dx, X2, X)
+  term3_hess = jnp.einsum("jik,kb,iac->jabc", dE_dx, X, X2)
+  term4_hess = jnp.einsum("jil,lc,iab->jabc", dE_dx, X, X2)
+  term5_hess = jnp.einsum("ji,iabc->jabc", E, X3)
+  new_hessian = term1_hess + term2_hess + term3_hess + term4_hess + term5_hess
+
+  z_components = Jet(value=new_value, gradient=new_gradient, hessian=new_hessian)
   return BasisVectors(p=z, components=z_components)
 
 @dispatch.abstract

@@ -6,6 +6,7 @@ import jax
 import jax.random as random
 from jaxtyping import Array
 from local_coordinates.basis import make_coordinate_basis
+from local_coordinates.jacobian import function_to_jacobian
 
 def test_basis_vectors_creation():
   p = jnp.array([1., 2.])
@@ -383,7 +384,60 @@ def test_change_coordinates_matches_basis_transform():
   # Check that the transformed components are consistent with the coordinate change
   assert jnp.allclose(z_basis_components_comp.value, z_basis.components.value)
   assert jnp.allclose(z_basis_components_comp.gradient, z_basis.components.gradient)
+  assert jnp.allclose(z_basis_components_comp.hessian, z_basis.components.hessian)
 
+
+def test_change_coordinates_standard_basis_hessian():
+  """
+  For a standard coordinate basis, the coordinate change should induce
+  derivatives consistent with the inverse Jacobian Jet.
+  """
+  q = jnp.array([1.0, jnp.pi / 4, jnp.pi / 6])
+  x = spherical_to_cartesian(q)
+
+  # Start with standard basis at q (identity, zero derivatives)
+  basis_q = get_standard_basis(q)
+
+  # Change coordinates to x
+  basis_x: BasisVectors = change_coordinates(basis_q, spherical_to_cartesian, q)
+
+  # Build Jacobian for z = spherical_to_cartesian(q) and invert it
+  dzdq = jax.jacrev(spherical_to_cartesian)(q)
+  d2zdq2 = jax.jacfwd(jax.jacrev(spherical_to_cartesian))(q)
+  d3zdq3 = jax.jacfwd(jax.jacfwd(jax.jacrev(spherical_to_cartesian)))(q)
+  from local_coordinates.jacobian import Jacobian, get_inverse
+  J_zq = Jacobian(value=dzdq, gradient=d2zdq2, hessian=d3zdq3)
+  J_qx = get_inverse(J_zq)
+
+  # For the standard basis, components after change_coordinates should match
+  # the inverse Jacobian Jet (up to the available derivative order).
+  assert jnp.allclose(basis_x.p, x)
+  assert jnp.allclose(basis_x.components.value, J_qx.value)
+  assert jnp.allclose(basis_x.components.gradient, J_qx.gradient)
+  assert jnp.allclose(basis_x.components.hessian, J_qx.hessian)
+
+def test_change_coordinates_jacobian_agrees_with_function():
+  """
+  For a standard coordinate basis, the coordinate change should induce
+  derivatives consistent with the inverse Jacobian Jet.
+  """
+  q = jnp.array([1.0, jnp.pi / 4, jnp.pi / 6])
+  x = spherical_to_cartesian(q)
+
+  # Start with standard basis at q (identity, zero derivatives)
+  basis_q = get_standard_basis(q)
+
+  # Change coordinates to x
+  basis_x: BasisVectors = change_coordinates(basis_q, spherical_to_cartesian, q)
+
+  # Build Jacobian for z = spherical_to_cartesian(q) and invert it
+  J = function_to_jacobian(spherical_to_cartesian, q)
+  basis_comp: BasisVectors = change_coordinates(basis_q, J)
+
+  # assert jnp.allclose(basis_x.p, basis_comp.p)
+  assert jnp.allclose(basis_x.components.value, basis_comp.components.value)
+  assert jnp.allclose(basis_x.components.gradient, basis_comp.components.gradient)
+  assert jnp.allclose(basis_x.components.hessian, basis_comp.components.hessian)
 
 def test_apply_contravariant_transform_vector():
   q = jnp.array([1.0, jnp.pi / 4, jnp.pi / 6])

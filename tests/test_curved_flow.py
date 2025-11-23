@@ -100,8 +100,6 @@ def test_second_order_flow_grid_eval():
 
   outputs = jax.vmap(lambda z: qf(z))(points)
 
-  import pdb; pdb.set_trace()
-
   assert outputs.shape == (n * n, N)
   assert jnp.all(jnp.isfinite(outputs))
 
