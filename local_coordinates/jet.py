@@ -718,7 +718,7 @@ def change_coordinates(
 @dispatch
 def change_coordinates(
   jet: Jet,
-  jacobian: Jacobian,
+  x_to_z_jacobian: Jacobian,
 ) -> Jet:
   """
   Change coordinates for a Jet using a precomputed Jacobian J[z](x).
@@ -736,18 +736,18 @@ def change_coordinates(
   d2Fpdx2 = jet.hessian
 
   if dFpdx is None or d2Fpdx2 is None:
-    raise ValueError("change_coordinates(jet, jacobian) requires jet to have gradient and hessian.")
+    raise ValueError("change_coordinates(jet, x_to_z_jacobian) requires jet to have gradient and hessian.")
 
-  dzdx = jacobian.value
+  dzdx = x_to_z_jacobian.value
   dim = dzdx.shape[0]
 
   if dzdx.shape != (dim, dim):
     raise ValueError(f"Jacobian value must be square of shape (N, N), got {dzdx.shape}.")
 
-  if jacobian.gradient is None:
+  if x_to_z_jacobian.gradient is None:
     d2zdx2 = jnp.zeros((dim, dim, dim), dtype=dzdx.dtype)
   else:
-    d2zdx2 = jacobian.gradient
+    d2zdx2 = x_to_z_jacobian.gradient
 
   dxdz = jnp.linalg.inv(dzdx)
 

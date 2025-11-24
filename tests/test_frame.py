@@ -9,6 +9,7 @@ from local_coordinates.tangent import lie_bracket as lie_bracket_vec, change_bas
 from local_coordinates.basis import BasisVectors
 from local_coordinates.tangent import lie_bracket, TangentVector, tangent_vectors_are_equivalent
 from typing import Annotated
+from local_coordinates.jacobian import function_to_jacobian
 
 def spherical_to_cartesian(q_in):
   q_in = jnp.asarray(q_in)
@@ -183,3 +184,99 @@ def test_lie_bracket_of_basis_vectors_zero_in_coordinate_frame():
   assert jnp.allclose(lie_brackets.components.value, 0.0)
   assert jnp.allclose(lie_brackets.components.gradient, 0.0)
   assert jnp.allclose(lie_brackets.components.hessian, 0.0)
+
+def test_frame_change_coordinates_round_trip():
+  """
+  Test that changing coordinates forward and backward preserves the Frame.
+  x -> z -> x
+  """
+  q = jnp.array([2.5, jnp.pi / 3, jnp.pi / 4])
+  x = spherical_to_cartesian(q)
+
+  dim = 3
+  key = random.key(1)
+
+  basis_val = random.normal(key, (dim, dim))
+  basis_grad = random.normal(key, (dim, dim, dim))
+  basis_hess = random.normal(key, (dim, dim, dim, dim))
+  basis = BasisVectors(p=q, components=Jet(value=basis_val, gradient=basis_grad, hessian=basis_hess, dim=dim))
+
+  comp_val = random.normal(key, (dim, dim))
+  comp_grad = random.normal(key, (dim, dim, dim))
+  comp_hess = random.normal(key, (dim, dim, dim, dim))
+  frame_comp = Jet(value=comp_val, gradient=comp_grad, hessian=comp_hess, dim=dim)
+
+  frame_q = Frame(p=q, basis=basis, components=frame_comp)
+
+  J_zq = function_to_jacobian(spherical_to_cartesian, q)
+  frame_x = change_coordinates(frame_q, J_zq)
+
+  J_xz = function_to_jacobian(cartesian_to_spherical, x)
+  frame_q_restored = change_coordinates(frame_x, J_xz)
+
+  assert jnp.allclose(frame_q_restored.basis.components.value, frame_q.basis.components.value, atol=1e-5)
+  assert jnp.allclose(frame_q_restored.basis.components.gradient, frame_q.basis.components.gradient, atol=1e-5)
+  assert jnp.allclose(frame_q_restored.basis.components.hessian, frame_q.basis.components.hessian, atol=1e-5)
+
+  assert jnp.allclose(frame_q_restored.components.value, frame_q.components.value, atol=1e-5)
+  assert jnp.allclose(frame_q_restored.components.gradient, frame_q.components.gradient, atol=1e-5)
+  assert jnp.allclose(frame_q_restored.components.hessian, frame_q.components.hessian, atol=1e-5)
+
+def test_frame_change_coordinates_vector_consistency():
+  """
+  Check that evaluating a frame vector gives the same physical vector
+  before and after coordinate change.
+  """
+  q = jnp.array([2.0, jnp.pi/4, jnp.pi/4])
+  x = spherical_to_cartesian(q)
+  dim = 3
+
+  basis_q = get_standard_basis(q)
+
+  key = random.key(2)
+  comp_val = random.normal(key, (dim, dim))
+  frame_comp = Jet(value=comp_val, gradient=None, hessian=None, dim=dim)
+
+  frame_q = Frame(p=q, basis=basis_q, components=frame_comp)
+
+  J_zq = function_to_jacobian(spherical_to_cartesian, q)
+  frame_x = change_coordinates(frame_q, J_zq)
+
+  v_idx = 0
+  v_q_obj = frame_q.get_basis_vector(0) # TangentVector
+  v_x_obj = frame_x.get_basis_vector(0)
+
+  J_val = J_zq.value # dx/dq
+  J_inv = jnp.linalg.inv(J_val) # dq/dx
+
+  v_q_std = v_q_obj.components.value @ basis_q.components.value
+  v_x_std = v_x_obj.components.value @ frame_x.basis.components.value
+
+  # Check geometric consistency
+  assert jnp.allclose(v_x_std, v_q_std @ J_inv, atol=1e-5)
+
+def test_frame_change_coordinates_scalar_components():
+  """
+  Verify that Frame components transform as scalars (invariants)
+  but their derivatives change via chain rule.
+  """
+  def shift_map(q):
+    return q + jnp.ones_like(q)
+
+  q = jnp.array([1.0, 2.0])
+
+  def comp_func(q):
+    return jnp.einsum('i,j->ij', q**2, jnp.ones_like(q)) # Make it matrix
+
+  comp_jet = function_to_jet(comp_func, q)
+  dim = 2
+  basis = get_standard_basis(q)
+
+  frame_q = Frame(p=q, basis=basis, components=comp_jet)
+
+  J_zq = function_to_jacobian(shift_map, q)
+  frame_x = change_coordinates(frame_q, J_zq)
+
+  assert jnp.allclose(frame_x.components.value, comp_jet.value)
+  assert jnp.allclose(frame_x.components.gradient, comp_jet.gradient)
+  assert jnp.allclose(frame_x.components.hessian, comp_jet.hessian)

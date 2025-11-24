@@ -8,7 +8,9 @@ from jaxtyping import Array, Float, PRNGKeyArray
 from linsdex import AbstractBatchableObject
 from plum import dispatch
 from local_coordinates.jet import Jet, jet_decorator
-from local_coordinates.basis import BasisVectors, get_basis_transform, get_standard_basis, apply_contravariant_transform
+from local_coordinates.basis import BasisVectors, get_basis_transform, get_standard_basis, apply_contravariant_transform, change_coordinates as change_coordinates_basis
+from local_coordinates.jet import change_coordinates as change_coordinates_jet
+from local_coordinates.jacobian import Jacobian
 from local_coordinates.tangent import TangentVector, lie_bracket
 from functools import partial
 from local_coordinates.jet import get_identity_jet
@@ -60,6 +62,17 @@ def change_basis(frame: Frame, new_basis: BasisVectors) -> Frame:
 
   # Apply the contravariant transform to each of the frame components
   new_components: Jet = eqx.filter_vmap(apply_contravariant_transform, in_axes=(None, 0))(T, frame.components)
+
+  return Frame(p=frame.p, components=new_components, basis=new_basis)
+
+@dispatch
+def change_coordinates(frame: Frame, x_to_z_jacobian: Jacobian) -> Frame:
+  """
+  Change coordinates for a Frame using a precomputed Jacobian.
+  """
+  new_basis = change_coordinates_basis(frame.basis, x_to_z_jacobian)
+  # Frame components are scalars, so we use the scalar Jet transformation
+  new_components = change_coordinates_jet(frame.components, x_to_z_jacobian)
 
   return Frame(p=frame.p, components=new_components, basis=new_basis)
 
