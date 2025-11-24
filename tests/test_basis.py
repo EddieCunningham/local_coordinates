@@ -1,6 +1,6 @@
 import jax.numpy as jnp
 from local_coordinates.basis import BasisVectors, change_basis, get_basis_transform, get_dual_basis_transform, get_standard_basis, get_standard_dual_basis, change_coordinates, apply_covariant_transform, apply_contravariant_transform
-from local_coordinates.jet import Jet, function_to_jet, jet_decorator, get_identity_jet
+from local_coordinates.jet import Jet, function_to_jet, jet_decorator, get_identity_jet, change_coordinates
 import pytest
 import jax
 import jax.random as random
@@ -470,3 +470,39 @@ def test_apply_contravariant_transform_vector():
   assert jnp.allclose(W_comp.value, expected.value)
   # assert jnp.allclose(W_comp.gradient, expected.gradient) # Ignore gradient because V_jet has no gradient
   # assert (W_comp.hessian is None and expected.hessian is None)
+
+def test_change_coordinates_equivalent_to_covariant_transform_plus_chain_rule():
+  """
+  Verify that change_coordinates(basis, jacobian) is equivalent to:
+  1. apply_covariant_transform(jacobian_jet, basis.components) -> components w.r.t x
+  2. change_coordinates(components_wrt_x, jacobian) -> components w.r.t z
+  """
+  q = jnp.array([1.0, jnp.pi / 4, jnp.pi / 6])
+  # x = spherical_to_cartesian(q)
+
+  # Random basis
+  value = random.normal(random.key(0), (3, 3))
+  gradient = random.normal(random.key(0), (3, 3, 3))
+  hessian = random.normal(random.key(0), (3, 3, 3, 3))
+  basis = BasisVectors(p=q, components=Jet(value=value, gradient=gradient, hessian=hessian, dim=3))
+
+  # Jacobian for transform
+  J = function_to_jacobian(spherical_to_cartesian, q)
+
+  # 1. Standard change_coordinates # PREFERRED METHOD
+  basis_transformed: BasisVectors = change_coordinates(basis, J)
+
+  # 2. Manual two-step process
+  # Step A: Covariant transform (mix components)
+  # Pass the forward Jacobian as a Jet
+  J_jet = Jet(value=J.value, gradient=J.gradient, hessian=J.hessian, dim=3)
+  mixed_components_x: Jet = apply_covariant_transform(J_jet, basis.components)
+
+  # Step B: Change differentiation coordinates (chain rule)
+  # We treat the components as scalar functions for this step
+  mixed_components_z: Jet = change_coordinates(mixed_components_x, J)
+
+  # Assert equivalence
+  assert jnp.allclose(basis_transformed.components.value, mixed_components_z.value)
+  assert jnp.allclose(basis_transformed.components.gradient, mixed_components_z.gradient)
+  assert jnp.allclose(basis_transformed.components.hessian, mixed_components_z.hessian)

@@ -136,9 +136,9 @@ def change_coordinates(
 
   # Inverse Jacobian for x(z)
   z_to_x_jacobian = get_inverse(x_to_z_jacobian)
-  X = z_to_x_jacobian.value            # X[i, a]   = ∂x^i / ∂z^a
-  X2 = z_to_x_jacobian.gradient        # X2[i, a, b] = ∂²x^i / ∂z^a ∂z^b
-  X3 = z_to_x_jacobian.hessian         # X3[i, a, b, c] = ∂³x^i / ∂z^a ∂z^b ∂z^c
+  J = z_to_x_jacobian.value            # J[i, a]   = ∂x^i / ∂z^a
+  H = z_to_x_jacobian.gradient        # H[i, a, b] = ∂²x^i / ∂z^a ∂z^b
+  T = z_to_x_jacobian.hessian         # T[i, a, b, c] = ∂³x^i / ∂z^a ∂z^b ∂z^c
 
   # Original basis components and their derivatives in x-coordinates
   E = basis.components.value        # (j, i)
@@ -151,32 +151,32 @@ def change_coordinates(
   if d2E_dx2 is None:
     d2E_dx2 = jnp.zeros((E.shape[0], dim, dim, dim), dtype=E.dtype)
 
-  if X2 is None:
-    X2 = jnp.zeros((dim, dim, dim), dtype=X.dtype)
-  if X3 is None:
-    X3 = jnp.zeros((dim, dim, dim, dim), dtype=X.dtype)
+  if H is None:
+    H = jnp.zeros((dim, dim, dim), dtype=J.dtype)
+  if T is None:
+    T = jnp.zeros((dim, dim, dim, dim), dtype=J.dtype)
 
-  # Value: Ẽ^a_j = E^i_j X^i_a
-  new_value = jnp.einsum("ji,ia->ja", E, X)
+  # Value: Ẽ^a_j = E^i_j J^i_a
+  new_value = jnp.einsum("ji,ia->ja", E, J)
 
   # First derivatives:
-  # ∂_b Ẽ^a_j = (∂E^i_j/∂x^k) X^k_b X^i_a + E^i_j X2^i_{ab}
-  term1_grad = jnp.einsum("jik,kb,ia->jab", dE_dx, X, X)
-  term2_grad = jnp.einsum("ji,iab->jab", E, X2)
+  # ∂_b Ẽ^a_j = (∂E^i_j/∂x^k) J^k_b J^i_a + E^i_j H^i_{ab}
+  term1_grad = jnp.einsum("jik,kb,ia->jab", dE_dx, J, J)
+  term2_grad = jnp.einsum("ji,iab->jab", E, H)
   new_gradient = term1_grad + term2_grad
 
   # Second derivatives:
   # ∂_c∂_b Ẽ^a_j =
-  #   (∂²E^i_j/∂x^k∂x^l) X^l_c X^k_b X^i_a
-  # + (∂E^i_j/∂x^k) X2^k_{bc} X^i_a
-  # + (∂E^i_j/∂x^k) X^k_b X2^i_{ac}
-  # + (∂E^i_j/∂x^l) X^l_c X2^i_{ab}
-  # + E^i_j X3^i_{abc}
-  term1_hess = jnp.einsum("jikl,lc,kb,ia->jabc", d2E_dx2, X, X, X)
-  term2_hess = jnp.einsum("jik,kbc,ia->jabc", dE_dx, X2, X)
-  term3_hess = jnp.einsum("jik,kb,iac->jabc", dE_dx, X, X2)
-  term4_hess = jnp.einsum("jil,lc,iab->jabc", dE_dx, X, X2)
-  term5_hess = jnp.einsum("ji,iabc->jabc", E, X3)
+  #   (∂²E^i_j/∂x^k∂x^l) J^l_c J^k_b J^i_a
+  # + (∂E^i_j/∂x^k) H^k_{bc} J^i_a
+  # + (∂E^i_j/∂x^k) J^k_b H^i_{ac}
+  # + (∂E^i_j/∂x^l) J^l_c H^i_{ab}
+  # + E^i_j T^i_{abc}
+  term1_hess = jnp.einsum("jikl,lc,kb,ia->jabc", d2E_dx2, J, J, J)
+  term2_hess = jnp.einsum("jik,kbc,ia->jabc", dE_dx, H, J)
+  term3_hess = jnp.einsum("jik,kb,iac->jabc", dE_dx, J, H)
+  term4_hess = jnp.einsum("jil,lc,iab->jabc", dE_dx, J, H)
+  term5_hess = jnp.einsum("ji,iabc->jabc", E, T)
   new_hessian = term1_hess + term2_hess + term3_hess + term4_hess + term5_hess
 
   z_components = Jet(value=new_value, gradient=new_gradient, hessian=new_hessian)
