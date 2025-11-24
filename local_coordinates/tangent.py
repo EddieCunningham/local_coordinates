@@ -7,8 +7,9 @@ import equinox as eqx
 from jaxtyping import Array, Float, PRNGKeyArray
 from linsdex import AbstractBatchableObject
 from plum import dispatch
-from local_coordinates.jet import Jet, jet_decorator, function_to_jet, change_coordinates
-from local_coordinates.basis import BasisVectors, get_basis_transform, get_standard_basis, apply_contravariant_transform
+from local_coordinates.jet import Jet, jet_decorator, function_to_jet, change_coordinates as change_coordinates_jet
+from local_coordinates.basis import BasisVectors, get_basis_transform, get_standard_basis, apply_contravariant_transform, change_coordinates as change_coordinates_basis
+from local_coordinates.jacobian import Jacobian
 
 class TangentVector(AbstractBatchableObject):
   """
@@ -83,6 +84,16 @@ def change_basis(vector: TangentVector, new_basis: BasisVectors) -> TangentVecto
 
   # Apply the contravariant transform to the vector components
   new_components = apply_contravariant_transform(T, vector.components)
+  return TangentVector(p=vector.p, components=new_components, basis=new_basis)
+
+@dispatch
+def change_coordinates(vector: TangentVector, x_to_z_jacobian: Jacobian) -> TangentVector:
+  """
+  Change coordinates for a TangentVector.
+  Transforms the basis and updates the components as scalars.
+  """
+  new_basis = change_coordinates_basis(vector.basis, x_to_z_jacobian)
+  new_components = change_coordinates_jet(vector.components, x_to_z_jacobian)
   return TangentVector(p=vector.p, components=new_components, basis=new_basis)
 
 @dispatch

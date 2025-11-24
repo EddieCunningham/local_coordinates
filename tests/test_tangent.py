@@ -7,9 +7,9 @@ import sympy
 from sympy import symbols
 
 from local_coordinates.jet import Jet, jet_decorator, function_to_jet, get_identity_jet
-from local_coordinates.basis import BasisVectors, get_basis_transform, get_standard_basis, apply_contravariant_transform
-from local_coordinates.tangent import TangentVector, change_basis, lie_bracket, tangent_vectors_are_equivalent, pushforward
-
+from local_coordinates.basis import BasisVectors, get_basis_transform, get_standard_basis, apply_contravariant_transform, change_coordinates
+from local_coordinates.tangent import TangentVector, change_basis, lie_bracket, tangent_vectors_are_equivalent, pushforward, change_coordinates as change_coordinates_tangent
+from local_coordinates.jacobian import function_to_jacobian
 
 def test_tangent_vector_creation_fields():
   p = jnp.array([1.0, 2.0])
@@ -408,7 +408,7 @@ def cartesian_to_spherical(x_in):
 @pytest.mark.xfail(reason="Pushforward jet w.r.t. y-coordinates not possible in general")
 def test_tangent_pushforward_definition():
   """
-  dF(X)(f) = X(f\circ F)
+  dF(X)(f) = X(f\\circ F)
   """
   # Choose a non-degenerate spherical point
   q = jnp.array([1.7, 0.4, -0.3])
@@ -666,3 +666,94 @@ def test_lie_bracket_identities():
   assert jnp.allclose(lhs.components.gradient, rhs.components.gradient)
   # assert jnp.allclose(lhs.components.hessian, rhs.components.hessian) # Don't have enough information to check hessian
 
+def test_tangent_vector_change_coordinates_round_trip():
+  """
+  Test that changing coordinates forward and backward preserves the TangentVector.
+  x -> z -> x
+  """
+  q = jnp.array([2.5, jnp.pi / 3, jnp.pi / 4])
+  x = spherical_to_cartesian(q)
+
+  dim = 3
+  key = random.key(1)
+
+  basis_val = random.normal(key, (dim, dim))
+  basis_grad = random.normal(key, (dim, dim, dim))
+  basis_hess = random.normal(key, (dim, dim, dim, dim))
+  basis = BasisVectors(p=q, components=Jet(value=basis_val, gradient=basis_grad, hessian=basis_hess, dim=dim))
+
+  comp_val = random.normal(key, (dim,))
+  comp_grad = random.normal(key, (dim, dim))
+  comp_hess = random.normal(key, (dim, dim, dim))
+  vec_comp = Jet(value=comp_val, gradient=comp_grad, hessian=comp_hess, dim=dim)
+
+  vec_q = TangentVector(p=q, basis=basis, components=vec_comp)
+
+  J_zq = function_to_jacobian(spherical_to_cartesian, q)
+  vec_x = change_coordinates_tangent(vec_q, J_zq)
+
+  J_xz = function_to_jacobian(cartesian_to_spherical, x)
+  vec_q_restored = change_coordinates_tangent(vec_x, J_xz)
+
+  assert jnp.allclose(vec_q_restored.basis.components.value, vec_q.basis.components.value, atol=1e-5)
+  assert jnp.allclose(vec_q_restored.basis.components.gradient, vec_q.basis.components.gradient, atol=1e-5)
+  assert jnp.allclose(vec_q_restored.basis.components.hessian, vec_q.basis.components.hessian, atol=1e-5)
+
+  assert jnp.allclose(vec_q_restored.components.value, vec_q.components.value, atol=1e-5)
+  assert jnp.allclose(vec_q_restored.components.gradient, vec_q.components.gradient, atol=1e-5)
+  assert jnp.allclose(vec_q_restored.components.hessian, vec_q.components.hessian, atol=1e-5)
+
+def test_tangent_vector_change_coordinates_vector_consistency():
+  """
+  Check that evaluating a tangent vector gives the same physical vector
+  before and after coordinate change.
+  """
+  q = jnp.array([2.0, jnp.pi/4, jnp.pi/4])
+  x = spherical_to_cartesian(q)
+  dim = 3
+
+  basis_q = get_standard_basis(q)
+
+  key = random.key(2)
+  comp_val = random.normal(key, (dim,))
+  vec_comp = Jet(value=comp_val, gradient=None, hessian=None, dim=dim)
+
+  vec_q = TangentVector(p=q, basis=basis_q, components=vec_comp)
+
+  J_zq = function_to_jacobian(spherical_to_cartesian, q)
+  vec_x = change_coordinates_tangent(vec_q, J_zq)
+
+  J_val = J_zq.value # dx/dq
+  J_inv = jnp.linalg.inv(J_val) # dq/dx
+
+  v_q_std = vec_q.components.value @ basis_q.components.value
+  v_x_std = vec_x.components.value @ vec_x.basis.components.value
+
+  # Check geometric consistency
+  assert jnp.allclose(v_x_std, v_q_std @ J_inv, atol=1e-5)
+
+def test_tangent_vector_change_coordinates_scalar_components():
+  """
+  Verify that TangentVector components transform as scalars (invariants)
+  but their derivatives change via chain rule.
+  """
+  def shift_map(q):
+    return q + jnp.ones_like(q)
+
+  q = jnp.array([1.0, 2.0])
+
+  def comp_func(q):
+    return q**2
+
+  comp_jet = function_to_jet(comp_func, q)
+  dim = 2
+  basis = get_standard_basis(q)
+
+  vec_q = TangentVector(p=q, basis=basis, components=comp_jet)
+
+  J_zq = function_to_jacobian(shift_map, q)
+  vec_x = change_coordinates_tangent(vec_q, J_zq)
+
+  assert jnp.allclose(vec_x.components.value, comp_jet.value)
+  assert jnp.allclose(vec_x.components.gradient, comp_jet.gradient)
+  assert jnp.allclose(vec_x.components.hessian, comp_jet.hessian)
