@@ -6,12 +6,13 @@ from local_coordinates.metric import RiemannianMetric, lower_index
 from local_coordinates.basis import get_standard_basis
 from local_coordinates.jet import function_to_jet
 from local_coordinates.connection import get_levi_civita_connection
-from local_coordinates.riemann import get_riemann_curvature_tensor
+from local_coordinates.riemann import RiemannCurvatureTensor, get_riemann_curvature_tensor
 from local_coordinates.basis import BasisVectors
 from local_coordinates.frame import get_lie_bracket_between_frame_pairs, basis_to_frame
 from local_coordinates.jet import Jet, jet_decorator, get_identity_jet
-from local_coordinates.tensor import change_basis
+from local_coordinates.tensor import TensorType, change_basis, change_coordinates
 from local_coordinates.tangent import TangentVector, lie_bracket
+from local_coordinates.jacobian import function_to_jacobian, get_inverse
 from jaxtyping import Array
 from typing import Annotated
 
@@ -181,3 +182,206 @@ def test_kretschmann_zero_iff_flat_and_basis_invariant():
   K_std = jnp.einsum("ijkl,abcd,ia,jb,kc,ld->", R_std, R_std, g_inv_std, g_inv_std, g_inv_std, g_inv_std)
 
   assert jnp.allclose(K, K_std)
+
+
+# ============================================================================
+# Tests for change_coordinates on RiemannCurvatureTensor
+# ============================================================================
+
+def polar_to_cartesian(q):
+  """Map from polar (r, phi) to Cartesian (x, y)."""
+  r, phi = q[0], q[1]
+  x = r * jnp.cos(phi)
+  y = r * jnp.sin(phi)
+  return jnp.array([x, y])
+
+def cartesian_to_polar(p):
+  """Map from Cartesian (x, y) to polar (r, phi)."""
+  x, y = p[0], p[1]
+  r = jnp.sqrt(x**2 + y**2)
+  phi = jnp.arctan2(y, x)
+  return jnp.array([r, phi])
+
+
+def test_riemann_change_coordinates_preserves_type():
+  """
+  Test that change_coordinates on a RiemannCurvatureTensor returns a RiemannCurvatureTensor.
+  """
+  dim = 2
+  p_cart = jnp.array([1.5, 0.8])
+
+  basis = get_standard_basis(p_cart)
+  key = random.PRNGKey(50)
+  k1, k2, k3 = random.split(key, 3)
+  riemann_val = random.normal(k1, (dim, dim, dim, dim))
+  gradient = random.normal(k2, (dim, dim, dim, dim, dim))
+  hessian = random.normal(k3, (dim, dim, dim, dim, dim, dim))
+  riemann = RiemannCurvatureTensor(
+    tensor_type=TensorType(k=3, l=1),
+    basis=basis,
+    components=Jet(value=riemann_val, gradient=gradient, hessian=hessian)
+  )
+
+  jac = function_to_jacobian(cartesian_to_polar, p_cart)
+  riemann_polar = change_coordinates(riemann, jac)
+
+  assert isinstance(riemann_polar, RiemannCurvatureTensor)
+
+
+def test_riemann_change_coordinates_value_unchanged():
+  """
+  Test that change_coordinates preserves the Riemann tensor component values.
+  """
+  dim = 2
+  p_cart = jnp.array([1.5, 0.8])
+
+  basis = get_standard_basis(p_cart)
+  key = random.PRNGKey(51)
+  k1, k2, k3 = random.split(key, 3)
+  riemann_val = random.normal(k1, (dim, dim, dim, dim))
+  gradient = random.normal(k2, (dim, dim, dim, dim, dim))
+  hessian = random.normal(k3, (dim, dim, dim, dim, dim, dim))
+  riemann = RiemannCurvatureTensor(
+    tensor_type=TensorType(k=3, l=1),
+    basis=basis,
+    components=Jet(value=riemann_val, gradient=gradient, hessian=hessian)
+  )
+
+  jac = function_to_jacobian(cartesian_to_polar, p_cart)
+  riemann_polar = change_coordinates(riemann, jac)
+
+  # Value should be unchanged
+  assert jnp.allclose(riemann_polar.components.value, riemann_val)
+
+
+def test_riemann_change_coordinates_round_trip():
+  """
+  Test that changing coordinates and changing back gives the original tensor.
+  """
+  dim = 2
+  p_cart = jnp.array([1.5, 0.8])
+  p_polar = cartesian_to_polar(p_cart)
+
+  basis = get_standard_basis(p_cart)
+  key = random.PRNGKey(52)
+  k1, k2, k3 = random.split(key, 3)
+  riemann_val = random.normal(k1, (dim, dim, dim, dim))
+  gradient = random.normal(k2, (dim, dim, dim, dim, dim))
+  hessian = random.normal(k3, (dim, dim, dim, dim, dim, dim))
+  riemann = RiemannCurvatureTensor(
+    tensor_type=TensorType(k=3, l=1),
+    basis=basis,
+    components=Jet(value=riemann_val, gradient=gradient, hessian=hessian)
+  )
+
+  # Round trip: Cartesian -> Polar -> Cartesian
+  jac_to_polar = function_to_jacobian(cartesian_to_polar, p_cart)
+  riemann_polar = change_coordinates(riemann, jac_to_polar)
+
+  jac_to_cart = function_to_jacobian(polar_to_cartesian, p_polar)
+  riemann_back = change_coordinates(riemann_polar, jac_to_cart)
+
+  assert jnp.allclose(riemann_back.components.value, riemann.components.value)
+  assert jnp.allclose(riemann_back.components.gradient, riemann.components.gradient, atol=1e-5)
+
+
+def test_riemann_change_coordinates_gradient_chain_rule():
+  """
+  Test that the gradient transforms according to the chain rule.
+  """
+  dim = 2
+  p_cart = jnp.array([1.5, 0.8])
+
+  basis = get_standard_basis(p_cart)
+  key = random.PRNGKey(53)
+  k1, k2, k3 = random.split(key, 3)
+  riemann_val = random.normal(k1, (dim, dim, dim, dim))
+  gradient = random.normal(k2, (dim, dim, dim, dim, dim))
+  hessian = random.normal(k3, (dim, dim, dim, dim, dim, dim))
+  riemann = RiemannCurvatureTensor(
+    tensor_type=TensorType(k=3, l=1),
+    basis=basis,
+    components=Jet(value=riemann_val, gradient=gradient, hessian=hessian)
+  )
+
+  jac = function_to_jacobian(cartesian_to_polar, p_cart)
+  riemann_polar = change_coordinates(riemann, jac)
+
+  # Expected gradient via chain rule: dR/dz^k = J^a_k * dR/dx^a
+  J_inv = get_inverse(jac)
+  J = J_inv.value  # J[a,k] = dx^a/dz^k
+  expected_gradient = jnp.einsum("ijkla,am->ijklm", gradient, J)
+
+  assert jnp.allclose(riemann_polar.components.gradient, expected_gradient)
+
+
+def test_riemann_change_coordinates_3d():
+  """
+  Test change_coordinates for Riemann tensor in 3D (spherical to Cartesian).
+  """
+  def spherical_to_cartesian(q):
+    r, theta, phi = q[0], q[1], q[2]
+    x = r * jnp.sin(theta) * jnp.cos(phi)
+    y = r * jnp.sin(theta) * jnp.sin(phi)
+    z = r * jnp.cos(theta)
+    return jnp.array([x, y, z])
+
+  def cartesian_to_spherical(p):
+    x, y, z = p[0], p[1], p[2]
+    r = jnp.sqrt(x**2 + y**2 + z**2)
+    theta = jnp.arccos(z / r)
+    phi = jnp.arctan2(y, x)
+    return jnp.array([r, theta, phi])
+
+  dim = 3
+  p_cart = jnp.array([1.0, 0.5, 0.3])
+  p_sph = cartesian_to_spherical(p_cart)
+
+  basis = get_standard_basis(p_cart)
+  key = random.PRNGKey(54)
+  k1, k2, k3 = random.split(key, 3)
+  riemann_val = random.normal(k1, (dim, dim, dim, dim))
+  gradient = random.normal(k2, (dim, dim, dim, dim, dim))
+  hessian = random.normal(k3, (dim, dim, dim, dim, dim, dim))
+  riemann = RiemannCurvatureTensor(
+    tensor_type=TensorType(k=3, l=1),
+    basis=basis,
+    components=Jet(value=riemann_val, gradient=gradient, hessian=hessian)
+  )
+
+  # Round trip
+  jac_to_sph = function_to_jacobian(cartesian_to_spherical, p_cart)
+  riemann_sph = change_coordinates(riemann, jac_to_sph)
+
+  jac_to_cart = function_to_jacobian(spherical_to_cartesian, p_sph)
+  riemann_back = change_coordinates(riemann_sph, jac_to_cart)
+
+  assert isinstance(riemann_back, RiemannCurvatureTensor)
+  assert jnp.allclose(riemann_back.components.value, riemann.components.value)
+  assert jnp.allclose(riemann_back.components.gradient, riemann.components.gradient, atol=1e-5)
+
+
+def test_riemann_tensor_type_preserved():
+  """
+  Test that the tensor type (3,1) is preserved after change_coordinates.
+  """
+  dim = 2
+  p_cart = jnp.array([1.5, 0.8])
+
+  basis = get_standard_basis(p_cart)
+  key = random.PRNGKey(55)
+  k1, k2, k3 = random.split(key, 3)
+  riemann_val = random.normal(k1, (dim, dim, dim, dim))
+  gradient = random.normal(k2, (dim, dim, dim, dim, dim))
+  hessian = random.normal(k3, (dim, dim, dim, dim, dim, dim))
+  riemann = RiemannCurvatureTensor(
+    tensor_type=TensorType(k=3, l=1),
+    basis=basis,
+    components=Jet(value=riemann_val, gradient=gradient, hessian=hessian)
+  )
+
+  jac = function_to_jacobian(cartesian_to_polar, p_cart)
+  riemann_polar = change_coordinates(riemann, jac)
+
+  assert riemann_polar.tensor_type.k == 3
+  assert riemann_polar.tensor_type.l == 1
