@@ -69,17 +69,37 @@ def change_basis(connection: Connection, new_basis: BasisVectors) -> Connection:
   T_jet: Jet = get_basis_transform(connection.basis, new_basis)
 
   @jet_decorator
-  def get_components(christoffel_symbols_val, E_tilde_val, T_val, T_grad) -> Jet:
+  def get_components(christoffel_symbols_val, E_old_val, T_val, T_grad) -> Jet:
+    # Christoffel symbol transformation formula derived from:
+    # ∇_{Ẽ_i} Ẽ_j = T^a_i T^b_j T̂^k_c Γ^c_{ab} Ẽ_k + T^a_i E_a(T^b_j) T̂^k_b Ẽ_k
+    #
+    # T_val = T̂ (component transform old→new), T_val_inv = T (basis transform)
+    # E_old_val = old basis vectors (connection.basis.components.value)
     T_val_inv = jnp.linalg.inv(T_val)
-    term1 = jnp.einsum("lj,ai,km,alm->ijk", T_val, T_val_inv, T_val_inv, christoffel_symbols_val)
-    term2 = jnp.einsum("ai,mja,km->ijk", E_tilde_val, T_grad, T_val_inv)
+
+    # Term1: T_val_inv[a,i] T_val_inv[b,j] T_val[k,c] Γ^c_{ab}
+    term1 = jnp.einsum("ai,bj,kc,abc->ijk", T_val_inv, T_val_inv, T_val, christoffel_symbols_val)
+
+    # Term2: T_val_inv[a,i] E_a(T_val_inv[b,j]) T_val[k,b]
+    # where E_a(f) = E_old[α,a] ∂_α f
+    #
+    # Using ∂(A^{-1}) = -A^{-1} (∂A) A^{-1}:
+    # ∂_α(T_val_inv[b,j]) = -T_val_inv[b,p] T_grad[p,q,α] T_val_inv[q,j]
+    #
+    # Full term: T_val_inv[a,i] × (-E_old[α,a] T_val_inv[b,p] T_grad[p,q,α] T_val_inv[q,j]) × T_val[k,b]
+    # Contracting b: sum_b T_val_inv[b,p] T_val[k,b] = δ_kp
+    # Result: -T_val_inv[a,i] E_old[α,a] T_grad[k,q,α] T_val_inv[q,j]
+    #
+    # The negative sign comes from ∂(A^{-1}) formula - this is why the notes have
+    # +Ẽ_i(T_j^m)T̂_m^k but the code has -einsum(...).
+    term2 = -jnp.einsum("ai,αa,kqα,qj->ijk", T_val_inv, E_old_val, T_grad, T_val_inv)
     return term1 + term2
 
   cs_value_jet = connection.christoffel_symbols.get_value_jet()
   T_value_jet = T_jet.get_value_jet()
   T_gradient_jet = T_jet.get_gradient_jet()
-  E_tilde_val_jet = new_basis.components.get_value_jet()
-  new_christoffel_symbols = get_components(cs_value_jet, E_tilde_val_jet, T_value_jet, T_gradient_jet)
+  E_old_val_jet = connection.basis.components.get_value_jet()  # OLD basis, not new!
+  new_christoffel_symbols = get_components(cs_value_jet, E_old_val_jet, T_value_jet, T_gradient_jet)
   return Connection(basis=new_basis, christoffel_symbols=new_christoffel_symbols)
 
 @dispatch

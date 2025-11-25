@@ -58,13 +58,28 @@ Finally, to get back to the Christoffel symbols in the new basis, we can apply t
 $$
 \begin{align}
   \tilde{\omega}_j^k(\tilde{E}_i) &= T_j^l \omega_l^m(\tilde{E}_i) \hat{T}_m^k + dT_j^m(\tilde{E}_i)\hat{T}_m^k \\
-  &= T_j^l \omega_l^m(\hat{T}_i^aE_a) \hat{T}_m^k + \tilde{E}_i(T_j^m)\hat{T}_m^k \\
-  &= T_j^l \hat{T}_i^a\omega_l^m(E_a) \hat{T}_m^k + \tilde{E}_i(T_j^m)\hat{T}_m^k \\
+  &= T_j^l \omega_l^m(T_i^aE_a) \hat{T}_m^k + \tilde{E}_i(T_j^m)\hat{T}_m^k \\
+  &= T_j^l T_i^a\omega_l^m(E_a) \hat{T}_m^k + \tilde{E}_i(T_j^m)\hat{T}_m^k \\
 \end{align}
 $$
 Finally, this gives us the transformation law for the Christoffel symbols as
 $$
 \begin{align}
-  \tilde{\Gamma}^k_{ij} = T_j^l \hat{T}_i^a \hat{T}_m^k \Gamma^m_{al} + \tilde{E}_i(T_j^m)\hat{T}_m^k
+  \tilde{\Gamma}^k_{ij} = T_j^l T_i^a \hat{T}_m^k \Gamma^m_{al} + \tilde{E}_i(T_j^m)\hat{T}_m^k
 \end{align}
 $$
+
+### Implementation note
+In code, we have access to $\hat{T}$ and its derivative $\partial_\alpha \hat{T}$, but the formula above requires $\tilde{E}_i(T_j^m)$, which involves the derivative of $T = \hat{T}^{-1}$.  Using the matrix inverse derivative rule $\partial(A^{-1}) = -A^{-1} (\partial A) A^{-1}$, we can write
+$$
+\begin{align}
+  \partial_\alpha(T_j^m) = \partial_\alpha(\hat{T}^{-1})_j^m = -(\hat{T}^{-1})_j^p (\partial_\alpha \hat{T})_p^q (\hat{T}^{-1})_q^m
+\end{align}
+$$
+This introduces a negative sign when expressing the second term in terms of $\partial \hat{T}$.  Expanding the second term $\tilde{E}_i(T_j^m)\hat{T}_m^k$ using $\tilde{E}_i = T_i^a E_a$ and the derivative formula above, and then contracting over $m$, we get
+$$
+\begin{align}
+  \tilde{E}_i(T_j^m)\hat{T}_m^k = -T_i^a E_a^\alpha (\partial_\alpha \hat{T})_k^q (\hat{T}^{-1})_q^j
+\end{align}
+$$
+where we used $(\hat{T}^{-1})_q^m \hat{T}_m^k = \delta_q^k$.

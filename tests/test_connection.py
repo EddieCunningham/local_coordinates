@@ -371,6 +371,147 @@ def test_connection_change_basis_round_trip():
     #     rtol=1e-5
     # ) # Don't have enough information to check hessian
 
+def test_connection_change_basis_covariant_derivative_equivalence():
+  """
+  Tests that covariant derivative computation is equivalent whether we:
+  1. Change vectors X, Y to the connection's basis, OR
+  2. Change the connection to the vectors' basis
+
+  This tests the correctness of change_basis for Connection objects.
+  If change_basis is buggy, these two approaches will give different results.
+  """
+  key = random.PRNGKey(42)
+  dim = 4
+
+  # Create a metric and its Levi-Civita connection
+  k1, k2, k3, k4 = random.split(key, 4)
+
+  # Create basis A (where the connection lives)
+  basis_a = create_random_basis(k1, dim)
+
+  # Create a metric in basis A
+  g_val = jnp.eye(dim) + 0.1 * random.normal(k2, (dim, dim))
+  g_val = g_val @ g_val.T  # Make symmetric positive definite
+  g_grad = random.normal(k3, (dim, dim, dim)) * 0.1
+  g_hess = random.normal(k4, (dim, dim, dim, dim)) * 0.1
+  metric = RiemannianMetric(
+    basis=basis_a,
+    components=Jet(value=g_val, gradient=g_grad, hessian=g_hess)
+  )
+  connection_a = get_levi_civita_connection(metric)
+
+  # Create basis B (different from A)
+  basis_b = create_random_basis(random.split(key)[0], dim)
+
+  # Create vector fields X and Y in basis B
+  k5, k6 = random.split(random.split(key)[1], 2)
+  X_vals = random.normal(k5, (dim,))
+  X_grads = random.normal(k5, (dim, dim))
+  X_hess = random.normal(k5, (dim, dim, dim))
+  X_in_B = TangentVector(
+    p=basis_a.p,
+    components=Jet(value=X_vals, gradient=X_grads, hessian=X_hess),
+    basis=basis_b
+  )
+
+  Y_vals = random.normal(k6, (dim,))
+  Y_grads = random.normal(k6, (dim, dim))
+  Y_hess = random.normal(k6, (dim, dim, dim))
+  Y_in_B = TangentVector(
+    p=basis_a.p,
+    components=Jet(value=Y_vals, gradient=Y_grads, hessian=Y_hess),
+    basis=basis_b
+  )
+
+  # APPROACH 1: Change vectors to connection's basis, compute covariant derivative
+  X_in_A = change_basis(X_in_B, connection_a.basis)
+  Y_in_A = change_basis(Y_in_B, connection_a.basis)
+  nablaX_Y_approach1 = connection_a.covariant_derivative(X_in_A, Y_in_A)
+
+  # APPROACH 2: Change connection to vectors' basis, compute covariant derivative
+  connection_b = change_basis(connection_a, basis_b)
+  nablaX_Y_approach2 = connection_b.covariant_derivative(X_in_B, Y_in_B)
+
+  # Both approaches should give the same result (in their respective bases)
+  # Convert approach2 result to basis A for comparison
+  nablaX_Y_approach2_in_A = change_basis(nablaX_Y_approach2, connection_a.basis)
+
+  # These should match!
+  assert jnp.allclose(
+    nablaX_Y_approach1.components.value,
+    nablaX_Y_approach2_in_A.components.value,
+    atol=1e-5
+  ), f"Covariant derivative mismatch!\nApproach 1: {nablaX_Y_approach1.components.value}\nApproach 2: {nablaX_Y_approach2_in_A.components.value}"
+
+
+def test_connection_change_basis_with_frame_basis_vectors():
+  """
+  Tests change_basis for Connection with frame-like basis vectors (identity components).
+  This mimics the setup in test_jacobi_equation where T and S are frame basis vectors.
+
+  The bug manifests when using vectors with identity-like components in a frame basis.
+  """
+  from local_coordinates.jet import get_identity_jet
+
+  key = random.PRNGKey(0)
+  dim = 5
+
+  # Create a random basis and metric (similar to test_jacobi_equation setup)
+  vals_key, grads_key, hessians_key = random.split(key, 3)
+  p = jnp.zeros(dim)
+  vals = jnp.eye(dim) + random.normal(vals_key, (dim, dim)) * 0.1
+  grads = random.normal(grads_key, (dim, dim, dim)) * 0.1
+  hessians = random.normal(hessians_key, (dim, dim, dim, dim)) * 0.1
+  random_basis = BasisVectors(p=p, components=Jet(value=vals, gradient=grads, hessian=hessians))
+
+  metric = RiemannianMetric(basis=random_basis, components=get_identity_jet(dim))
+  standard_basis = get_standard_basis(p)
+  metric = change_basis(metric, standard_basis)
+
+  connection = get_levi_civita_connection(metric)
+
+  # Create a "frame" basis (like RNC frame) - a different random basis
+  frame_basis = create_random_basis(random.split(key)[0], dim)
+
+  # Frame basis vectors T and S with identity-like components (like in RNC)
+  T = TangentVector(
+    p=p,
+    components=Jet(
+      value=jnp.array([1.0, 0.0, 0.0, 0.0, 0.0]),
+      gradient=jnp.zeros((dim, dim)),
+      hessian=jnp.zeros((dim, dim, dim))
+    ),
+    basis=frame_basis
+  )
+  S = TangentVector(
+    p=p,
+    components=Jet(
+      value=jnp.array([0.0, 1.0, 0.0, 0.0, 0.0]),
+      gradient=jnp.zeros((dim, dim)),
+      hessian=jnp.zeros((dim, dim, dim))
+    ),
+    basis=frame_basis
+  )
+
+  # APPROACH 1: Change T, S to connection's basis, then compute
+  T_conn_basis = change_basis(T, connection.basis)
+  S_conn_basis = change_basis(S, connection.basis)
+  nablaS_T_approach1 = connection.covariant_derivative(S_conn_basis, T_conn_basis)
+
+  # APPROACH 2: Change connection to frame basis, then compute
+  connection_frame = change_basis(connection, frame_basis)
+  nablaS_T_approach2 = connection_frame.covariant_derivative(S, T)
+
+  # Convert approach2 result to connection's basis for comparison
+  nablaS_T_approach2_conn_basis = change_basis(nablaS_T_approach2, connection.basis)
+
+  # These should match!
+  assert jnp.allclose(
+    nablaS_T_approach1.components.value,
+    nablaS_T_approach2_conn_basis.components.value,
+    atol=1e-5
+  ), f"Covariant derivative mismatch with frame vectors!\nApproach 1: {nablaS_T_approach1.components.value}\nApproach 2: {nablaS_T_approach2_conn_basis.components.value}"
+
 def create_random_metric(key: random.PRNGKey, dim: int) -> RiemannianMetric:
   p_key, W_key, basis_key = random.split(key, 3)
   p = jnp.zeros(dim)
