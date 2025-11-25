@@ -230,6 +230,76 @@ $$
 }
 $$
 
+# Tensors
+A $(k, l)$-tensor $T$ has $k$ contravariant (upper) indices and $l$ covariant (lower) indices.  In local coordinates $(x^1, \dots, x^n)$, the components of $T$ are written as
+$$
+T^{a_1 \cdots a_k}_{b_1 \cdots b_l}
+$$
+where the upper indices $a_1, \dots, a_k$ are contravariant and the lower indices $b_1, \dots, b_l$ are covariant.
+
+When we change coordinates from $x$ to $z$, the tensor components transform according to the tensor transformation law.  Recall the Jacobians:
+$$
+J_i^a = \frac{\partial x^a}{\partial z^i}, \qquad G_i^a = \frac{\partial z^a}{\partial x^i} = (J^{-1})_i^{\ a}.
+$$
+Contravariant indices transform with $G$ (the forward Jacobian), while covariant indices transform with $J$ (the inverse Jacobian).
+
+### Value transformation
+The components in the new coordinate system are given by
+$$
+\tilde{T}^{i_1 \cdots i_k}_{j_1 \cdots j_l} = G_{a_1}^{i_1} \cdots G_{a_k}^{i_k} \, J_{j_1}^{b_1} \cdots J_{j_l}^{b_l} \, T^{a_1 \cdots a_k}_{b_1 \cdots b_l}.
+$$
+To verify this, we can check special cases:
+- For a $(1,0)$-tensor (contravariant vector): $\tilde{T}^i = G_a^i T^a = \frac{\partial z^i}{\partial x^a} T^a$, matching the tangent vector formula.
+- For a $(0,1)$-tensor (covariant vector/covector): $\tilde{T}_j = J_j^b T_b = \frac{\partial x^b}{\partial z^j} T_b$, which is the standard covector transformation.
+- For a $(0,2)$-tensor (e.g., a metric): $\tilde{g}_{ij} = J_i^a J_j^b g_{ab}$, the well-known metric transformation.
+
+### Gradient
+The gradient of the tensor components with respect to $z$ is obtained by differentiating the transformation law.  For simplicity, we illustrate this for a $(1,1)$-tensor $T^a_b$.  The value transformation is
+$$
+\tilde{T}^i_j = G_a^i J_j^b T^a_b.
+$$
+Differentiating with respect to $z^k$:
+$$
+\begin{align}
+\frac{\partial \tilde{T}^i_j}{\partial z^k} &= \frac{\partial G_a^i}{\partial z^k} J_j^b T^a_b + G_a^i \frac{\partial J_j^b}{\partial z^k} T^a_b + G_a^i J_j^b \frac{\partial T^a_b}{\partial z^k}
+\end{align}
+$$
+Using the identities
+$$
+\frac{\partial G_a^i}{\partial z^k} = -G_c^i H^c_{mk} G_a^m, \qquad \frac{\partial J_j^b}{\partial z^k} = H^b_{jk},
+$$
+and the chain rule $\frac{\partial}{\partial z^k} = J_k^d \frac{\partial}{\partial x^d}$, we obtain
+$$
+\begin{align}
+\frac{\partial \tilde{T}^i_j}{\partial z^k} &= -G_c^i H^c_{mk} G_a^m J_j^b T^a_b + G_a^i H^b_{jk} T^a_b + G_a^i J_j^b J_k^d \frac{\partial T^a_b}{\partial x^d}
+\end{align}
+$$
+This can be written more compactly as
+$$
+\boxed{
+\frac{\partial \tilde{T}^i_j}{\partial z^k} = -G_c^i H^c_{mk} \tilde{T}^m_j + H^b_{jk} G_a^i T^a_b + G_a^i J_j^b J_k^d \frac{\partial T^a_b}{\partial x^d}
+}
+$$
+
+For a general $(k,l)$-tensor, the gradient formula has:
+- One term for each contravariant index involving $-G H G$
+- One term for each covariant index involving $+H$
+- One chain rule term for the original derivative
+
+### Hessian
+The Hessian of the tensor components follows from differentiating the gradient formula.  For a $(1,1)$-tensor, the structure is similar to the basis vector Hessian, with additional terms for the covariant index.  We omit the full formula here, but note that it involves:
+- The third derivative $T^b_{kml} = \frac{\partial^3 x^b}{\partial z^k \partial z^m \partial z^l}$
+- Products of Hessians $H^a_{ij} H^b_{kl}$
+- The original tensor and its first and second derivatives
+
+To summarize, the coordinate change for a $(k,l)$-tensor is given by:
+$$
+\boxed{
+\tilde{T}^{i_1 \cdots i_k}_{j_1 \cdots j_l} = G_{a_1}^{i_1} \cdots G_{a_k}^{i_k} \, J_{j_1}^{b_1} \cdots J_{j_l}^{b_l} \, T^{a_1 \cdots a_k}_{b_1 \cdots b_l}
+}
+$$
+with derivatives computed using the chain rule and the derivatives of $G$ and $J$.
+
 # Christoffel symbols
 Christoffel symbols $\Gamma_{bc}^a$ are not tensors, so they do not transform like tensors. We can derive their transformation rule by considering the definition of the covariant derivative. In the $x$-coordinate system, the covariant derivative is defined by $\nabla_{\partial_{x^b}} \partial_{x^c} = \Gamma_{bc}^a \partial_{x^a}$.
 We want to find the Christoffel symbols $\bar{\Gamma}_{ij}^k$ in the $z$-coordinate system, such that $\nabla_{\partial_{z^i}} \partial_{z^j} = \bar{\Gamma}_{ij}^k \partial_{z^k}$.

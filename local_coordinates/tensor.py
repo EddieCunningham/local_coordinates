@@ -7,9 +7,10 @@ from jax import random
 import equinox as eqx
 from jaxtyping import Array, Float, PRNGKeyArray
 from linsdex import AbstractBatchableObject
-from local_coordinates.basis import BasisVectors, get_basis_transform
+from local_coordinates.basis import BasisVectors, get_basis_transform, change_coordinates as change_coordinates_basis
+from local_coordinates.jacobian import Jacobian
 from plum import dispatch
-from local_coordinates.jet import Jet, jet_decorator
+from local_coordinates.jet import Jet, jet_decorator, change_coordinates as change_coordinates_jet
 import warnings
 
 class TensorType(eqx.Module):
@@ -170,6 +171,41 @@ def change_basis(tensor: Tensor, new_basis: BasisVectors) -> Tensor:
   new_components: Jet = transform_components(t_comps_val, *transforms)
 
   tensor_class = type(tensor) # e.g. RiemannianMetric
+  return tensor_class(
+    tensor_type=tensor.tensor_type,
+    basis=new_basis,
+    components=new_components
+  )
+
+@dispatch
+def change_coordinates(tensor: Tensor, x_to_z_jacobian: Jacobian) -> Tensor:
+  """
+  Change coordinates for a Tensor.
+
+  When we change coordinates from x to z, the tensor components (as scalar functions)
+  stay the same, but their derivatives change via the chain rule. The basis is
+  re-expressed in the new coordinate system.
+
+  This follows the pattern from notes/change_coordinates.md: the tensor is
+  T = T^{i_1...i_k}_{j_1...j_l} E_{i_1} ⊗ ... ⊗ e^{j_1} ⊗ ...
+  where the components T^{...}_{...} are scalars and the basis vectors/covectors
+  are geometric objects that get re-expressed in new coordinates.
+
+  Args:
+    tensor: The tensor to transform.
+    x_to_z_jacobian: Jacobian of the coordinate transformation z(x).
+
+  Returns:
+    The tensor with basis expressed in z-coordinates and component derivatives
+    updated via chain rule.
+  """
+  # Transform the basis to new coordinates
+  new_basis = change_coordinates_basis(tensor.basis, x_to_z_jacobian)
+
+  # Transform the components as scalar jets (value unchanged, derivatives via chain rule)
+  new_components = change_coordinates_jet(tensor.components, x_to_z_jacobian)
+
+  tensor_class = type(tensor)
   return tensor_class(
     tensor_type=tensor.tensor_type,
     basis=new_basis,

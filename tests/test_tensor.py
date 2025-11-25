@@ -1,8 +1,9 @@
 import jax.numpy as jnp
 import pytest
-from local_coordinates.basis import BasisVectors, get_basis_transform
-from local_coordinates.tensor import Tensor, TensorType, change_basis
+from local_coordinates.basis import BasisVectors, get_basis_transform, get_standard_basis
+from local_coordinates.tensor import Tensor, TensorType, change_basis, change_coordinates
 from local_coordinates.jet import Jet, function_to_jet
+from local_coordinates.jacobian import Jacobian, function_to_jacobian, get_inverse
 import jax
 import jax.random as random
 
@@ -170,3 +171,358 @@ def test_change_coordinates_tensor_0_2(a_basis, another_basis):
     assert jnp.allclose(new_tensor.components.gradient, manual_new_grad)
     manual_new_hess = 0.5 * (manual_new_hess + jnp.swapaxes(manual_new_hess, -1, -2))
     assert jnp.allclose(new_tensor.components.hessian, manual_new_hess)
+
+
+# ============================================================================
+# Tests for change_coordinates
+# ============================================================================
+
+def polar_to_cartesian(q):
+  """Map from polar (r, phi) to Cartesian (x, y)."""
+  r, phi = q[0], q[1]
+  x = r * jnp.cos(phi)
+  y = r * jnp.sin(phi)
+  return jnp.array([x, y])
+
+def cartesian_to_polar(p):
+  """Map from Cartesian (x, y) to polar (r, phi)."""
+  x, y = p[0], p[1]
+  r = jnp.sqrt(x**2 + y**2)
+  phi = jnp.arctan2(y, x)
+  return jnp.array([r, phi])
+
+
+def test_change_coordinates_value_unchanged():
+  """
+  Test that change_coordinates preserves the tensor component values.
+  Only the derivatives should change (via chain rule).
+  """
+  dim = 2
+  p_cart = jnp.array([1.5, 0.8])
+
+  # Create a tensor in Cartesian coordinates
+  basis = get_standard_basis(p_cart)
+  tt = TensorType(k=1, l=1)
+  key = jax.random.PRNGKey(42)
+  k1, k2, k3 = random.split(key, 3)
+  components = random.normal(k1, (dim, dim))
+  gradient = random.normal(k2, (dim, dim, dim))
+  hessian = random.normal(k3, (dim, dim, dim, dim))
+  tensor = Tensor(
+    tensor_type=tt,
+    basis=basis,
+    components=Jet(value=components, gradient=gradient, hessian=hessian)
+  )
+
+  # Change coordinates to polar
+  jac = function_to_jacobian(cartesian_to_polar, p_cart)
+  tensor_polar = change_coordinates(tensor, jac)
+
+  # Value should be unchanged
+  assert jnp.allclose(tensor_polar.components.value, components)
+
+
+def test_change_coordinates_round_trip_scalar():
+  """
+  Test that changing coordinates and changing back gives the original tensor
+  for a scalar (0,0)-tensor.
+  """
+  dim = 2
+  p_cart = jnp.array([1.5, 0.8])
+  p_polar = cartesian_to_polar(p_cart)
+
+  # Create a scalar tensor
+  basis = get_standard_basis(p_cart)
+  tt = TensorType(k=0, l=0)
+  key = jax.random.PRNGKey(100)
+  k1, k2, k3 = random.split(key, 3)
+  # Scalar has shape ()
+  components = random.normal(k1, ())
+  gradient = random.normal(k2, (dim,))
+  hessian = random.normal(k3, (dim, dim))
+  tensor = Tensor(
+    tensor_type=tt,
+    basis=basis,
+    components=Jet(value=components, gradient=gradient, hessian=hessian)
+  )
+
+  # Round trip: Cartesian -> Polar -> Cartesian
+  jac_to_polar = function_to_jacobian(cartesian_to_polar, p_cart)
+  tensor_polar = change_coordinates(tensor, jac_to_polar)
+
+  jac_to_cart = function_to_jacobian(polar_to_cartesian, p_polar)
+  tensor_back = change_coordinates(tensor_polar, jac_to_cart)
+
+  # Should recover original
+  assert jnp.allclose(tensor_back.components.value, tensor.components.value)
+  assert jnp.allclose(tensor_back.components.gradient, tensor.components.gradient, atol=1e-5)
+
+
+def test_change_coordinates_round_trip_vector():
+  """
+  Test round-trip for a contravariant vector (0,1)-tensor.
+  """
+  dim = 2
+  p_cart = jnp.array([1.5, 0.8])
+  p_polar = cartesian_to_polar(p_cart)
+
+  basis = get_standard_basis(p_cart)
+  tt = TensorType(k=0, l=1)
+  key = jax.random.PRNGKey(101)
+  k1, k2, k3 = random.split(key, 3)
+  components = random.normal(k1, (dim,))
+  gradient = random.normal(k2, (dim, dim))
+  hessian = random.normal(k3, (dim, dim, dim))
+  tensor = Tensor(
+    tensor_type=tt,
+    basis=basis,
+    components=Jet(value=components, gradient=gradient, hessian=hessian)
+  )
+
+  # Round trip
+  jac_to_polar = function_to_jacobian(cartesian_to_polar, p_cart)
+  tensor_polar = change_coordinates(tensor, jac_to_polar)
+
+  jac_to_cart = function_to_jacobian(polar_to_cartesian, p_polar)
+  tensor_back = change_coordinates(tensor_polar, jac_to_cart)
+
+  assert jnp.allclose(tensor_back.components.value, tensor.components.value)
+  assert jnp.allclose(tensor_back.components.gradient, tensor.components.gradient, atol=1e-5)
+
+
+def test_change_coordinates_round_trip_covector():
+  """
+  Test round-trip for a covariant covector (1,0)-tensor.
+  """
+  dim = 2
+  p_cart = jnp.array([1.5, 0.8])
+  p_polar = cartesian_to_polar(p_cart)
+
+  basis = get_standard_basis(p_cart)
+  tt = TensorType(k=1, l=0)
+  key = jax.random.PRNGKey(102)
+  k1, k2, k3 = random.split(key, 3)
+  components = random.normal(k1, (dim,))
+  gradient = random.normal(k2, (dim, dim))
+  hessian = random.normal(k3, (dim, dim, dim))
+  tensor = Tensor(
+    tensor_type=tt,
+    basis=basis,
+    components=Jet(value=components, gradient=gradient, hessian=hessian)
+  )
+
+  # Round trip
+  jac_to_polar = function_to_jacobian(cartesian_to_polar, p_cart)
+  tensor_polar = change_coordinates(tensor, jac_to_polar)
+
+  jac_to_cart = function_to_jacobian(polar_to_cartesian, p_polar)
+  tensor_back = change_coordinates(tensor_polar, jac_to_cart)
+
+  assert jnp.allclose(tensor_back.components.value, tensor.components.value)
+  assert jnp.allclose(tensor_back.components.gradient, tensor.components.gradient, atol=1e-5)
+
+
+def test_change_coordinates_round_trip_metric():
+  """
+  Test round-trip for a (2,0) covariant tensor (metric-like).
+  """
+  dim = 2
+  p_cart = jnp.array([1.5, 0.8])
+  p_polar = cartesian_to_polar(p_cart)
+
+  basis = get_standard_basis(p_cart)
+  tt = TensorType(k=2, l=0)
+  key = jax.random.PRNGKey(103)
+  k1, k2, k3 = random.split(key, 3)
+  components = random.normal(k1, (dim, dim))
+  gradient = random.normal(k2, (dim, dim, dim))
+  hessian = random.normal(k3, (dim, dim, dim, dim))
+  tensor = Tensor(
+    tensor_type=tt,
+    basis=basis,
+    components=Jet(value=components, gradient=gradient, hessian=hessian)
+  )
+
+  # Round trip
+  jac_to_polar = function_to_jacobian(cartesian_to_polar, p_cart)
+  tensor_polar = change_coordinates(tensor, jac_to_polar)
+
+  jac_to_cart = function_to_jacobian(polar_to_cartesian, p_polar)
+  tensor_back = change_coordinates(tensor_polar, jac_to_cart)
+
+  assert jnp.allclose(tensor_back.components.value, tensor.components.value)
+  assert jnp.allclose(tensor_back.components.gradient, tensor.components.gradient, atol=1e-5)
+
+
+def test_change_coordinates_round_trip_mixed_tensor():
+  """
+  Test round-trip for a (1,1) mixed tensor.
+  """
+  dim = 2
+  p_cart = jnp.array([1.5, 0.8])
+  p_polar = cartesian_to_polar(p_cart)
+
+  basis = get_standard_basis(p_cart)
+  tt = TensorType(k=1, l=1)
+  key = jax.random.PRNGKey(104)
+  k1, k2, k3 = random.split(key, 3)
+  components = random.normal(k1, (dim, dim))
+  gradient = random.normal(k2, (dim, dim, dim))
+  hessian = random.normal(k3, (dim, dim, dim, dim))
+  tensor = Tensor(
+    tensor_type=tt,
+    basis=basis,
+    components=Jet(value=components, gradient=gradient, hessian=hessian)
+  )
+
+  # Round trip
+  jac_to_polar = function_to_jacobian(cartesian_to_polar, p_cart)
+  tensor_polar = change_coordinates(tensor, jac_to_polar)
+
+  jac_to_cart = function_to_jacobian(polar_to_cartesian, p_polar)
+  tensor_back = change_coordinates(tensor_polar, jac_to_cart)
+
+  assert jnp.allclose(tensor_back.components.value, tensor.components.value)
+  assert jnp.allclose(tensor_back.components.gradient, tensor.components.gradient, atol=1e-5)
+
+
+def test_change_coordinates_basis_transforms_correctly():
+  """
+  Test that the basis is correctly transformed under change_coordinates.
+  The basis should be expressed in the new coordinate system.
+  """
+  dim = 2
+  p_cart = jnp.array([1.5, 0.8])
+
+  basis = get_standard_basis(p_cart)
+  tt = TensorType(k=1, l=1)
+  key = jax.random.PRNGKey(105)
+  k1, k2, k3 = random.split(key, 3)
+  components = random.normal(k1, (dim, dim))
+  gradient = random.normal(k2, (dim, dim, dim))
+  hessian = random.normal(k3, (dim, dim, dim, dim))
+  tensor = Tensor(
+    tensor_type=tt,
+    basis=basis,
+    components=Jet(value=components, gradient=gradient, hessian=hessian)
+  )
+
+  jac = function_to_jacobian(cartesian_to_polar, p_cart)
+  tensor_polar = change_coordinates(tensor, jac)
+
+  # The basis should be transformed by G (forward Jacobian)
+  G = jac.value  # G[i,a] = dz^i/dx^a
+  expected_basis_value = G @ basis.components.value
+  assert jnp.allclose(tensor_polar.basis.components.value, expected_basis_value)
+
+
+def test_change_coordinates_gradient_chain_rule():
+  """
+  Test that the gradient transforms according to the chain rule.
+  For scalar jets: dF/dz^i = (dx^a/dz^i) * dF/dx^a
+  """
+  dim = 2
+  p_cart = jnp.array([1.5, 0.8])
+
+  basis = get_standard_basis(p_cart)
+  # Use a scalar tensor (0,0) for simplicity
+  tt = TensorType(k=0, l=0)
+  key = jax.random.PRNGKey(106)
+  k1, k2, k3 = random.split(key, 3)
+  components = random.normal(k1, ())
+  gradient = random.normal(k2, (dim,))
+  hessian = random.normal(k3, (dim, dim))
+  tensor = Tensor(
+    tensor_type=tt,
+    basis=basis,
+    components=Jet(value=components, gradient=gradient, hessian=hessian)
+  )
+
+  jac = function_to_jacobian(cartesian_to_polar, p_cart)
+  tensor_polar = change_coordinates(tensor, jac)
+
+  # Expected gradient via chain rule: dF/dz^i = J^a_i * dF/dx^a
+  # where J^a_i = dx^a/dz^i (inverse Jacobian)
+  J_inv = get_inverse(jac)
+  J = J_inv.value  # J[a,i] = dx^a/dz^i
+  expected_gradient = jnp.einsum("a,ai->i", gradient, J)
+
+  assert jnp.allclose(tensor_polar.components.gradient, expected_gradient)
+
+
+def test_change_coordinates_higher_rank_tensor():
+  """
+  Test change_coordinates for a higher-rank (2,2) tensor.
+  """
+  dim = 2
+  p_cart = jnp.array([1.5, 0.8])
+  p_polar = cartesian_to_polar(p_cart)
+
+  basis = get_standard_basis(p_cart)
+  tt = TensorType(k=2, l=2)
+  key = jax.random.PRNGKey(107)
+  k1, k2, k3 = random.split(key, 3)
+  components = random.normal(k1, (dim, dim, dim, dim))
+  gradient = random.normal(k2, (dim, dim, dim, dim, dim))
+  hessian = random.normal(k3, (dim, dim, dim, dim, dim, dim))
+  tensor = Tensor(
+    tensor_type=tt,
+    basis=basis,
+    components=Jet(value=components, gradient=gradient, hessian=hessian)
+  )
+
+  # Round trip
+  jac_to_polar = function_to_jacobian(cartesian_to_polar, p_cart)
+  tensor_polar = change_coordinates(tensor, jac_to_polar)
+
+  jac_to_cart = function_to_jacobian(polar_to_cartesian, p_polar)
+  tensor_back = change_coordinates(tensor_polar, jac_to_cart)
+
+  assert jnp.allclose(tensor_back.components.value, tensor.components.value)
+  assert jnp.allclose(tensor_back.components.gradient, tensor.components.gradient, atol=1e-5)
+
+
+def test_change_coordinates_3d():
+  """
+  Test change_coordinates in 3D (spherical to Cartesian).
+  """
+  def spherical_to_cartesian(q):
+    r, theta, phi = q[0], q[1], q[2]
+    x = r * jnp.sin(theta) * jnp.cos(phi)
+    y = r * jnp.sin(theta) * jnp.sin(phi)
+    z = r * jnp.cos(theta)
+    return jnp.array([x, y, z])
+
+  def cartesian_to_spherical(p):
+    x, y, z = p[0], p[1], p[2]
+    r = jnp.sqrt(x**2 + y**2 + z**2)
+    theta = jnp.arccos(z / r)
+    phi = jnp.arctan2(y, x)
+    return jnp.array([r, theta, phi])
+
+  dim = 3
+  p_cart = jnp.array([1.0, 0.5, 0.3])
+  p_sph = cartesian_to_spherical(p_cart)
+
+  basis = get_standard_basis(p_cart)
+  tt = TensorType(k=1, l=1)
+  key = jax.random.PRNGKey(108)
+  k1, k2, k3 = random.split(key, 3)
+  components = random.normal(k1, (dim, dim))
+  gradient = random.normal(k2, (dim, dim, dim))
+  hessian = random.normal(k3, (dim, dim, dim, dim))
+  tensor = Tensor(
+    tensor_type=tt,
+    basis=basis,
+    components=Jet(value=components, gradient=gradient, hessian=hessian)
+  )
+
+  # Round trip
+  jac_to_sph = function_to_jacobian(cartesian_to_spherical, p_cart)
+  tensor_sph = change_coordinates(tensor, jac_to_sph)
+
+  jac_to_cart = function_to_jacobian(spherical_to_cartesian, p_sph)
+  tensor_back = change_coordinates(tensor_sph, jac_to_cart)
+
+  assert jnp.allclose(tensor_back.components.value, tensor.components.value)
+  assert jnp.allclose(tensor_back.components.gradient, tensor.components.gradient, atol=1e-5)
