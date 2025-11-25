@@ -21,6 +21,9 @@ from local_coordinates.connection import Connection, get_levi_civita_connection
 class RiemannCurvatureTensor(Tensor):
   """
   The Riemann curvature tensor is a tensor that measures the curvature of a Riemannian manifold.
+  This is really the (3, 1) Riemann curvature endomorphism.  When defined using the Levi-Civita
+  connection, the components of the tensor are given by:
+  {R_{ijk}}^m = E_i(\Gamma^m_{jk}) - E_j(\Gamma^m_{ik}) + \Gamma^l_{jk}\Gamma^m_{il} - \Gamma^l_{ik}\Gamma^m_{jl} - c^l_{ij}\Gamma^m_{lk}
   """
   tensor_type: TensorType = eqx.field(static=True)
   basis: BasisVectors
@@ -41,6 +44,20 @@ class RiemannCurvatureTensor(Tensor):
         raise ValueError(
             f"Batch shape mismatch: basis implies {expected_batch_shape} but components have {actual_batch_shape}"
         )
+
+  def __call__(self, X: TangentVector, Y: TangentVector, Z: TangentVector) -> TangentVector:
+    """
+    Evaluate the Riemann curvature endomorphism at three tangent vectors.
+    R(X, Y)Z = nabla_X nabla_Y Z - nabla_Y nabla_X Z - nabla_{[X,Y]} Z
+    """
+    X: TangentVector = change_basis(X, self.basis)
+    Y: TangentVector = change_basis(Y, self.basis)
+    Z: TangentVector = change_basis(Z, self.basis)
+    @jet_decorator
+    def components(X_val, Y_val, Z_val, R_val):
+      return jnp.einsum("ijkl,i,j,k->l", R_val, X_val, Y_val, Z_val)
+    result_components = components(X.components.get_value_jet(), Y.components.get_value_jet(), Z.components.get_value_jet(), self.components.get_value_jet())
+    return TangentVector(p=self.basis.p, components=result_components, basis=self.basis)
 
 def get_riemann_curvature_tensor(connection: Connection) -> RiemannCurvatureTensor:
   """

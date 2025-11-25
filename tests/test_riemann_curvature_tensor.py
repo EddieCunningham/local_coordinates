@@ -185,6 +185,169 @@ def test_kretschmann_zero_iff_flat_and_basis_invariant():
 
 
 # ============================================================================
+# Tests for Riemann tensor evaluation: R(X, Y, Z)
+# ============================================================================
+
+def test_riemann_call_basic():
+  """
+  Test that R(X, Y, Z) computes R_{ijk}^l X^i Y^j Z^k correctly.
+  """
+  key = random.PRNGKey(60)
+  dim = 4
+  metric = create_random_metric(key, dim)
+  connection = get_levi_civita_connection(metric)
+  riemann_tensor = get_riemann_curvature_tensor(connection)
+
+  k1, k2, k3 = random.split(key, 3)
+  X = change_basis(create_random_vector_field(k1, dim), riemann_tensor.basis)
+  Y = change_basis(create_random_vector_field(k2, dim), riemann_tensor.basis)
+  Z = change_basis(create_random_vector_field(k3, dim), riemann_tensor.basis)
+
+  result = riemann_tensor(X, Y, Z)
+
+  # Result should be a TangentVector
+  assert isinstance(result, TangentVector)
+
+  # Manual computation
+  R_val = riemann_tensor.components.value
+  X_val = X.components.value
+  Y_val = Y.components.value
+  Z_val = Z.components.value
+  expected = jnp.einsum("ijkl,i,j,k->l", R_val, X_val, Y_val, Z_val)
+
+  assert jnp.allclose(result.components.value, expected)
+
+
+def test_riemann_call_skew_symmetry():
+  """
+  Test that R(X, Y, Z) = -R(Y, X, Z) (skew-symmetry in first two arguments).
+  """
+  key = random.PRNGKey(61)
+  dim = 4
+  metric = create_random_metric(key, dim)
+  connection = get_levi_civita_connection(metric)
+  riemann_tensor = get_riemann_curvature_tensor(connection)
+
+  k1, k2, k3 = random.split(key, 3)
+  X = change_basis(create_random_vector_field(k1, dim), riemann_tensor.basis)
+  Y = change_basis(create_random_vector_field(k2, dim), riemann_tensor.basis)
+  Z = change_basis(create_random_vector_field(k3, dim), riemann_tensor.basis)
+
+  R_XYZ = riemann_tensor(X, Y, Z)
+  R_YXZ = riemann_tensor(Y, X, Z)
+
+  assert jnp.allclose(R_XYZ.components.value, -R_YXZ.components.value)
+
+
+def test_riemann_call_vectors_in_different_basis():
+  """
+  Test that R(X, Y, Z) works when vectors are in a different basis than R.
+  """
+  key = random.PRNGKey(62)
+  dim = 4
+  metric = create_random_metric(key, dim)
+  connection = get_levi_civita_connection(metric)
+  riemann_tensor = get_riemann_curvature_tensor(connection)
+
+  k1, k2, k3 = random.split(key, 3)
+  # Create vectors in their own random bases (not riemann_tensor.basis)
+  X = create_random_vector_field(k1, dim)
+  Y = create_random_vector_field(k2, dim)
+  Z = create_random_vector_field(k3, dim)
+
+  result = riemann_tensor(X, Y, Z)
+
+  # Manually change basis and compute
+  X_cb = change_basis(X, riemann_tensor.basis)
+  Y_cb = change_basis(Y, riemann_tensor.basis)
+  Z_cb = change_basis(Z, riemann_tensor.basis)
+  R_val = riemann_tensor.components.value
+  expected = jnp.einsum("ijkl,i,j,k->l", R_val, X_cb.components.value, Y_cb.components.value, Z_cb.components.value)
+
+  assert jnp.allclose(result.components.value, expected)
+
+
+def test_riemann_call_matches_definition():
+  """
+  Test that R(X, Y, Z) matches the definition via covariant derivatives:
+  R(X, Y)Z = nabla_X nabla_Y Z - nabla_Y nabla_X Z - nabla_[X,Y] Z
+  """
+  key = random.PRNGKey(63)
+  dim = 4
+  metric = create_random_metric(key, dim)
+  connection = get_levi_civita_connection(metric)
+  riemann_tensor = get_riemann_curvature_tensor(connection)
+
+  k1, k2, k3 = random.split(key, 3)
+  X = change_basis(create_random_vector_field(k1, dim), connection.basis)
+  Y = change_basis(create_random_vector_field(k2, dim), connection.basis)
+  Z = change_basis(create_random_vector_field(k3, dim), connection.basis)
+
+  # Compute via covariant derivatives
+  nablaY_Z = connection.covariant_derivative(Y, Z)
+  nablaX_Z = connection.covariant_derivative(X, Z)
+  bracket_XY = lie_bracket(X, Y)
+  nablaX_nablaY_Z = connection.covariant_derivative(X, nablaY_Z)
+  nablaY_nablaX_Z = connection.covariant_derivative(Y, nablaX_Z)
+  nabla_bracket_XY_Z = connection.covariant_derivative(bracket_XY, Z)
+  R_XYZ_def = nablaX_nablaY_Z.components.value - nablaY_nablaX_Z.components.value - nabla_bracket_XY_Z.components.value
+
+  # Compute via __call__
+  R_XYZ = riemann_tensor(X, Y, Z)
+
+  assert jnp.allclose(R_XYZ.components.value, R_XYZ_def)
+
+
+def test_riemann_call_with_gradients():
+  """
+  Test that R(X, Y, Z) returns a TangentVector with correctly shaped gradient.
+  """
+  key = random.PRNGKey(64)
+  dim = 3
+  metric = create_random_metric(key, dim)
+  connection = get_levi_civita_connection(metric)
+  riemann_tensor = get_riemann_curvature_tensor(connection)
+
+  k1, k2, k3 = random.split(key, 3)
+  X = change_basis(create_random_vector_field(k1, dim), riemann_tensor.basis)
+  Y = change_basis(create_random_vector_field(k2, dim), riemann_tensor.basis)
+  Z = change_basis(create_random_vector_field(k3, dim), riemann_tensor.basis)
+
+  result = riemann_tensor(X, Y, Z)
+
+  # The result should be a TangentVector with gradient of correct shape
+  assert isinstance(result, TangentVector)
+  assert result.components.gradient is not None
+  assert result.components.value.shape == (dim,)  # R(X,Y,Z) is a vector
+  assert result.components.gradient.shape == (dim, dim)  # gradient of vector is (dim, dim)
+
+
+def test_riemann_call_first_bianchi():
+  """
+  Test the first Bianchi identity via __call__:
+  R(X, Y)Z + R(Y, Z)X + R(Z, X)Y = 0
+  """
+  key = random.PRNGKey(65)
+  dim = 4
+  metric = create_random_metric(key, dim)
+  connection = get_levi_civita_connection(metric)
+  riemann_tensor = get_riemann_curvature_tensor(connection)
+
+  k1, k2, k3 = random.split(key, 3)
+  X = change_basis(create_random_vector_field(k1, dim), riemann_tensor.basis)
+  Y = change_basis(create_random_vector_field(k2, dim), riemann_tensor.basis)
+  Z = change_basis(create_random_vector_field(k3, dim), riemann_tensor.basis)
+
+  R_XYZ = riemann_tensor(X, Y, Z)
+  R_YZX = riemann_tensor(Y, Z, X)
+  R_ZXY = riemann_tensor(Z, X, Y)
+
+  bianchi_sum = R_XYZ.components.value + R_YZX.components.value + R_ZXY.components.value
+
+  assert jnp.allclose(bianchi_sum, 0.0)
+
+
+# ============================================================================
 # Tests for change_coordinates on RiemannCurvatureTensor
 # ============================================================================
 
