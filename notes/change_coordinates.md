@@ -52,50 +52,158 @@ $$
 where $J_i^a = \frac{\partial x^a}{\partial z^i}$ is the Jacobian of the inverse map.
 
 # Basis vectors
-A `BasisVectors` object contains a matrix of `Jet` objects, each of which represents a single component of the basis vectors.  When we want to change coordinates, we need to perform the coordinate change on each of the components of the basis vectors.  Let $(E_1, \dots, E_n)$ be a set of basis vectors where $E_j = E_j^i \frac{\partial}{\partial x^i}$.  The components of these vectors in the new coordinate system are given by $E_j = \tilde{E}_j^a \frac{\partial}{\partial z^a}$.  Using the transformation law implemented in `local_coordinates/basis.py`, the components transform as
+A `BasisVectors` object contains a matrix of `Jet` objects, each of which represents a single component of the basis vectors.  When we want to change coordinates, we need to perform the coordinate change on each of the components of the basis vectors.
+
+Let $(E_1, \dots, E_n)$ be a set of basis vectors where
 $$
-\tilde{E}_j^a = E_j^i \frac{\partial x^i}{\partial z^a}
+E_j = E_j^i \frac{\partial}{\partial x^i}
 $$
-To find the derivatives of the new components, we differentiate this expression with respect to $z$.  Let $J_a^i = \frac{\partial x^i}{\partial z^a}$, $H_{ab}^i = \frac{\partial^2 x^i}{\partial z^a \partial z^b}$, and $T_{abc}^i = \frac{\partial^3 x^i}{\partial z^a \partial z^b \partial z^c}$ denote the derivatives of the inverse map $x(z)$.
+In the new coordinate system $(z^1,\dots,z^n)$ we can write
+$$
+E_j = \tilde{E}_j^a \frac{\partial}{\partial z^a}
+$$
+We can relate the two coordinate bases by
+$$
+E_j = E_j^i \frac{\partial}{\partial x^i} = E_j^i \frac{\partial z^a}{\partial x^i} \frac{\partial}{\partial z^a}
+$$
+which gives us the coordinate change rule
+$$
+\boxed{
+\tilde{E}_j^a = E_j^i \frac{\partial z^a}{\partial x^i}
+}
+$$
+where $\frac{\partial z^a}{\partial x^i}$ are the entries of the Jacobian of the forward coordinate map $z(x)$, i.e. the inverse matrix of $J_a^i = \frac{\partial x^i}{\partial z^a}$.
+
+To differentiate these components with respect to the $z$–coordinates, it is convenient to write the inverse Jacobian explicitly.  Let
+$$
+J_a^i = \frac{\partial x^i}{\partial z^a}, \qquad G_i^a = \frac{\partial z^a}{\partial x^i} = (J^{-1})_i^{\ a}.
+$$
+Then
+$$
+\tilde{E}_j^a = E_j^i G_i^a.
+$$
 
 ### Gradient
-The gradient of the new components is given by
+The gradient of the new components with respect to $z$ is obtained by the chain rule.  Using
 $$
 \begin{align}
-\frac{\partial \tilde{E}_j^a}{\partial z^b} &= \frac{\partial}{\partial z^b}\left(E_j^i \frac{\partial x^i}{\partial z^a}\right) \\
-&= \frac{\partial E_j^i}{\partial x^k} \frac{\partial x^k}{\partial z^b} \frac{\partial x^i}{\partial z^a} + E_j^i \frac{\partial^2 x^i}{\partial z^a \partial z^b}
+  \frac{\partial \tilde{E}^i_j}{\partial z^k} &= \frac{\partial}{\partial z^k} (\frac{\partial z^i}{\partial x^a}E_j^a) \\
+  &= -\frac{\partial z^i}{\partial x^b}\frac{\partial^2 x^b}{\partial z^k \partial z^l}\frac{\partial z^l}{\partial x^a}E_j^a + \frac{\partial z^i}{\partial x^a}\frac{\partial x^b}{\partial z^k}\frac{\partial E_j^a}{\partial x^b} \\
+  &= -G^i_b H^b_{kl}G^l_a E^a_j + G_a^i J^b_k \frac{\partial E_j^a}{\partial x^b}
 \end{align}
 $$
-Using our notation for the inverse Jacobian derivatives, this is
+So we have that
 $$
-\frac{\partial \tilde{E}_j^a}{\partial z^b} = \frac{\partial E_j^i}{\partial x^k} J_b^k J_a^i + E_j^i H_{ab}^i
+\boxed{
+  \frac{\partial \tilde{E}^i_j}{\partial z^k} = -G^i_b H^b_{km}G^m_a E^a_j + G_a^i J^b_k \frac{\partial E_j^a}{\partial x^b}
+}
 $$
 
 ### Hessian
-For the Hessian, we differentiate again with respect to $z^c$:
+We can take another derivative with respect to $z^l$ to get the Hessian.  First, we need the derivative of the forward Jacobian $G$ with respect to $z$.  From the identity $G^i_c J^c_a = \delta^i_a$, differentiating with respect to $z^l$ gives
+$$
+\frac{\partial G^i_c}{\partial z^l} J^c_a + G^i_c H^c_{al} = 0
+$$
+Multiplying by $G^a_n$ and using $J^c_a G^a_n = \delta^c_n$:
+$$
+\frac{\partial G^i_n}{\partial z^l} = -G^i_c H^c_{al} G^a_n
+$$
+We also introduce the third derivative of the coordinate transformation:
+$$
+T^b_{kml} = \frac{\partial^3 x^b}{\partial z^k \partial z^m \partial z^l}
+$$
+Now we differentiate the gradient formula
+$$
+\frac{\partial \tilde{E}^i_j}{\partial z^k} = -G^i_b H^b_{km}G^m_a E^a_j + G_a^i J^b_k \frac{\partial E_j^a}{\partial x^b}
+$$
+with respect to $z^l$.  For the first term, using the product rule on four factors:
 $$
 \begin{align}
-\frac{\partial^2 \tilde{E}_j^a}{\partial z^c \partial z^b} &= \frac{\partial}{\partial z^c}\left(\frac{\partial E_j^i}{\partial x^k} \frac{\partial x^k}{\partial z^b} \frac{\partial x^i}{\partial z^a} + E_j^i \frac{\partial^2 x^i}{\partial z^a \partial z^b}\right) \\
-&= \left(\frac{\partial^2 E_j^i}{\partial x^k \partial x^l} \frac{\partial x^l}{\partial z^c} \frac{\partial x^k}{\partial z^b} \frac{\partial x^i}{\partial z^a} + \frac{\partial E_j^i}{\partial x^k} \frac{\partial^2 x^k}{\partial z^b \partial z^c} \frac{\partial x^i}{\partial z^a} + \frac{\partial E_j^i}{\partial x^k} \frac{\partial x^k}{\partial z^b} \frac{\partial^2 x^i}{\partial z^a \partial z^c}\right) \\
-&\quad + \left(\frac{\partial E_j^i}{\partial x^l} \frac{\partial x^l}{\partial z^c} \frac{\partial^2 x^i}{\partial z^a \partial z^b} + E_j^i \frac{\partial^3 x^i}{\partial z^a \partial z^b \partial z^c}\right)
+\frac{\partial}{\partial z^l}\left(-G^i_b H^b_{km}G^m_a E^a_j\right)
+&= -\frac{\partial G^i_b}{\partial z^l} H^b_{km}G^m_a E^a_j - G^i_b T^b_{kml}G^m_a E^a_j \\
+&\quad - G^i_b H^b_{km}\frac{\partial G^m_a}{\partial z^l} E^a_j - G^i_b H^b_{km}G^m_a J^c_l\frac{\partial E^a_j}{\partial x^c}
 \end{align}
 $$
-Using the compact notation:
+Substituting the derivative of $G$:
 $$
-\frac{\partial^2 \tilde{E}_j^a}{\partial z^c \partial z^b} = \frac{\partial^2 E_j^i}{\partial x^k \partial x^l} J_c^l J_b^k J_a^i + \frac{\partial E_j^i}{\partial x^k} H_{bc}^k J_a^i + \frac{\partial E_j^i}{\partial x^k} J_b^k H_{ac}^i + \frac{\partial E_j^i}{\partial x^l} J_c^l H_{ab}^i + E_j^i T_{abc}^i
+\begin{align}
+&= G^i_c H^c_{nl} G^n_b H^b_{km}G^m_a E^a_j - G^i_b T^b_{kml}G^m_a E^a_j \\
+&\quad + G^i_b H^b_{km}G^m_c H^c_{nl} G^n_a E^a_j - G^i_b H^b_{km}G^m_a J^c_l\frac{\partial E^a_j}{\partial x^c}
+\end{align}
 $$
-
-To summarize, the coordinate change for `BasisVectors` is given by:
+For the second term:
+$$
+\begin{align}
+\frac{\partial}{\partial z^l}\left(G_a^i J^b_k \frac{\partial E_j^a}{\partial x^b}\right)
+&= \frac{\partial G_a^i}{\partial z^l} J^b_k \frac{\partial E_j^a}{\partial x^b} + G_a^i H^b_{kl} \frac{\partial E_j^a}{\partial x^b} + G_a^i J^b_k J^c_l \frac{\partial^2 E_j^a}{\partial x^b \partial x^c} \\
+&= -G^i_c H^c_{nl} G^n_a J^b_k \frac{\partial E_j^a}{\partial x^b} + G_a^i H^b_{kl} \frac{\partial E_j^a}{\partial x^b} + G_a^i J^b_k J^c_l \frac{\partial^2 E_j^a}{\partial x^b \partial x^c}
+\end{align}
+$$
+Combining all terms and grouping by powers of $E$, we obtain
 $$
 \boxed{
 \begin{align}
-\tilde{E}_j^a &= E_j^i J_a^i \\
-\frac{\partial \tilde{E}_j^a}{\partial z^b} &= \frac{\partial E_j^i}{\partial x^k} J_b^k J_a^i + E_j^i H_{ab}^i \\
-\frac{\partial^2 \tilde{E}_j^a}{\partial z^c \partial z^b} &= \frac{\partial^2 E_j^i}{\partial x^k \partial x^l} J_c^l J_b^k J_a^i + \frac{\partial E_j^i}{\partial x^k} H_{bc}^k J_a^i + \frac{\partial E_j^i}{\partial x^k} J_b^k H_{ac}^i + \frac{\partial E_j^i}{\partial x^l} J_c^l H_{ab}^i + E_j^i T_{abc}^i
+\frac{\partial^2 \tilde{E}^i_j}{\partial z^k \partial z^l}
+&= G^i_c H^c_{nl} G^n_b H^b_{km}G^m_a E^a_j + G^i_b H^b_{km}G^m_c H^c_{nl} G^n_a E^a_j - G^i_b T^b_{kml}G^m_a E^a_j \\
+&\quad - G^i_b H^b_{km}G^m_a J^c_l\frac{\partial E^a_j}{\partial x^c} - G^i_c H^c_{nl} G^n_a J^b_k \frac{\partial E_j^a}{\partial x^b} + G_a^i H^b_{kl} \frac{\partial E_j^a}{\partial x^b} \\
+&\quad + G_a^i J^b_k J^c_l \frac{\partial^2 E_j^a}{\partial x^b \partial x^c}
 \end{align}
 }
 $$
-where $J, H, T$ represent the first, second, and third derivatives of the inverse map $x(z)$.
+This formula expresses the Hessian of the transformed components in terms of the original components $E^a_j$ and their derivatives, along with the Jacobian $J$, its inverse $G$, and the second and third derivatives $H$ and $T$ of the inverse coordinate map $x(z)$.
+
+# Tangent vectors
+A `TangentVector` object represents a tangent vector at a point $p$, written in components of a chosen basis.  In local coordinates $(x^1,\dots,x^n)$, a coordinate basis is given by $\partial_{x^i}$ and a tangent vector can be written as
+$$
+X = X^i \frac{\partial}{\partial x^i}.
+$$
+After changing coordinates to $(z^1,\dots,z^n)$ we can also write
+$$
+X = \tilde{X}^a \frac{\partial}{\partial z^a}.
+$$
+The coordinate bases are related by
+$$
+\frac{\partial}{\partial z^a} = J_a^i \frac{\partial}{\partial x^i}, \qquad
+J_a^i = \frac{\partial x^i}{\partial z^a},
+$$
+and the inverse Jacobian is
+$$
+G_i^a = \frac{\partial z^a}{\partial x^i} = (J^{-1})_i^{\ a}.
+$$
+Requiring that $X$ is the same geometric vector in both coordinate systems,
+$$
+X^i \frac{\partial}{\partial x^i}
+  = \tilde{X}^a \frac{\partial}{\partial z^a}
+  = \tilde{X}^a J_a^i \frac{\partial}{\partial x^i},
+$$
+we obtain
+$$
+X^i = \tilde{X}^a J_a^i
+\quad\Longrightarrow\quad
+\tilde{X}^a = X^i G_i^a.
+$$
+Thus the components of a tangent vector transform contravariantly with respect to the Jacobian of the coordinate change:
+$$
+\boxed{
+  \tilde{X}^a = X^i \frac{\partial z^a}{\partial x^i}.
+}
+$$
+If $X$ is extended to a local vector field $X(x)$, we can also track the change of its derivatives.  Writing $X^i(x)$ for the components as functions of $x$ and
+$$
+R_{k i}^a = \frac{\partial G_i^a}{\partial x^k},
+$$
+the first derivatives in the $z$–coordinates satisfy
+$$
+\begin{align}
+\frac{\partial \tilde{X}^a}{\partial z^b}
+  &= J_b^k \frac{\partial}{\partial x^k}\bigl(X^i G_i^a\bigr) \\
+  &= J_b^k\left(
+        \frac{\partial X^i}{\partial x^k} G_i^a
+        + X^i R_{k i}^a
+      \right),
+\end{align}
+$$
+which is the exact analogue of the basis-vector gradient formula with $E_j^i$ replaced by $X^i$.  A second differentiation with respect to $z^c$ produces a Hessian expression of the same form as in the `Basis vectors` section, again with $E_j^i$ replaced by $X^i$, $R$ and $S$ encoding the first and second $x$–derivatives of $G$.
 
 # Frames
 A `Frame` object consists of a set of basis vectors (stored in a `BasisVectors` object) and a matrix of components (stored as a `Jet`) that express the frame vectors as linear combinations of the basis vectors.  Let $V_k$ be the $k$-th vector in the frame, and let $E_j$ be the $j$-th basis vector.  Then
@@ -119,5 +227,46 @@ $$
 & \frac{\partial \tilde{C}_k^j}{\partial z^i} = J_i^a \frac{\partial C_k^j}{\partial x^a} \\
 & \frac{\partial^2 \tilde{C}_k^j}{\partial z^i \partial z^l} = J_l^b\left(\frac{\partial^2 C_k^j}{\partial x^b \partial x^d} - \frac{\partial^2 z^c}{\partial x^b \partial x^d}J_c^a\frac{\partial C_k^j}{\partial x^a} \right)J_i^d
 \end{align}
+}
+$$
+
+# Christoffel symbols
+Christoffel symbols $\Gamma_{bc}^a$ are not tensors, so they do not transform like tensors. We can derive their transformation rule by considering the definition of the covariant derivative. In the $x$-coordinate system, the covariant derivative is defined by $\nabla_{\partial_{x^b}} \partial_{x^c} = \Gamma_{bc}^a \partial_{x^a}$.
+We want to find the Christoffel symbols $\bar{\Gamma}_{ij}^k$ in the $z$-coordinate system, such that $\nabla_{\partial_{z^i}} \partial_{z^j} = \bar{\Gamma}_{ij}^k \partial_{z^k}$.
+
+Recall that the basis vectors transform as $\partial_{z^i} = J_i^a \partial_{x^a}$, where $J_i^a = \frac{\partial x^a}{\partial z^i}$.
+Substituting this into the definition:
+$$
+\begin{align}
+\nabla_{\partial_{z^i}} \partial_{z^j} &= \nabla_{J_i^a \partial_{x^a}} (J_j^b \partial_{x^b}) \\
+&= J_i^a \nabla_{\partial_{x^a}} (J_j^b \partial_{x^b}) \\
+&= J_i^a \left( J_j^b \nabla_{\partial_{x^a}} \partial_{x^b} + \frac{\partial J_j^b}{\partial x^a} \partial_{x^b} \right)
+\end{align}
+$$
+We know that $\nabla_{\partial_{x^a}} \partial_{x^b} = \Gamma_{ab}^c \partial_{x^c}$.
+Also, using the chain rule, $J_i^a \frac{\partial}{\partial x^a} = \frac{\partial}{\partial z^i}$. Thus, the second term becomes
+$$
+J_i^a \frac{\partial J_j^b}{\partial x^a} \partial_{x^b} = \frac{\partial J_j^b}{\partial z^i} \partial_{x^b} = \frac{\partial^2 x^b}{\partial z^i \partial z^j} \partial_{x^b} = H_{ij}^b \partial_{x^b}
+$$
+Substituting these back:
+$$
+\nabla_{\partial_{z^i}} \partial_{z^j} = J_i^a J_j^b \Gamma_{ab}^c \partial_{x^c} + H_{ij}^c \partial_{x^c} = (J_i^a J_j^b \Gamma_{ab}^c + H_{ij}^c) \partial_{x^c}
+$$
+On the other hand, we have
+$$
+\nabla_{\partial_{z^i}} \partial_{z^j} = \bar{\Gamma}_{ij}^k \partial_{z^k} = \bar{\Gamma}_{ij}^k J_k^c \partial_{x^c}
+$$
+Equating the coefficients of $\partial_{x^c}$:
+$$
+\bar{\Gamma}_{ij}^k J_k^c = J_i^a J_j^b \Gamma_{ab}^c + H_{ij}^c
+$$
+To isolate $\bar{\Gamma}_{ij}^k$, we multiply by the inverse Jacobian $(J^{-1})_c^m = \frac{\partial z^m}{\partial x^c}$.
+$$
+\bar{\Gamma}_{ij}^m = (J^{-1})_c^m (J_i^a J_j^b \Gamma_{ab}^c + H_{ij}^c)
+$$
+Renaming indices to match the LHS ($m \to k$):
+$$
+\boxed{
+\bar{\Gamma}_{ij}^k = (J^{-1})_c^k J_i^a J_j^b \Gamma_{ab}^c + (J^{-1})_c^k H_{ij}^c
 }
 $$

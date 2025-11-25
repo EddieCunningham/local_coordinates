@@ -1,4 +1,5 @@
 import numpy as np
+import jax
 import jax.numpy as jnp
 from einsteinpy.symbolic import MetricTensor
 from sympy import symbols, sin, cos
@@ -201,9 +202,26 @@ def test_change_coordinates_metric_einsteinpy():
         phi = jnp.arctan2(y, x)
         return jnp.array([t, r, theta, phi])
 
-    from local_coordinates.basis import change_coordinates as change_coordinates_basis
-    polar_basis = change_coordinates_basis(cartesian_basis, cart_to_polar, p_cart)
-    lc_metric_polar = change_basis(lc_metric_cart, polar_basis)
+    def polar_to_cart(polar_vec):
+        t, r, theta, phi = polar_vec
+        x = r * jnp.sin(theta) * jnp.cos(phi)
+        y = r * jnp.sin(theta) * jnp.sin(phi)
+        z = r * jnp.cos(theta)
+        return jnp.array([t, x, y, z])
+
+    # For metric transformation via change_basis, we need to construct a basis
+    # whose components matrix equals the Jacobian J = d(cart)/d(polar).
+    # The change_basis function for (0,2) tensors computes g' = Tinv.T @ g @ Tinv
+    # where Tinv = inv(get_basis_transform(old, new)) = new_basis_components.
+    # For the correct metric transformation g' = J.T @ g @ J, we need Tinv = J.
+    # Therefore, new_basis_components = J (the Jacobian of polar_to_cart).
+    p_polar = cart_to_polar(p_cart)
+    J_polar_to_cart = jax.jacrev(polar_to_cart)(p_polar)  # d(cart)/d(polar)
+    polar_basis_for_metric = BasisVectors(
+        p=p_cart,
+        components=Jet(value=jnp.array(J_polar_to_cart), gradient=None, hessian=None, dim=4)
+    )
+    lc_metric_polar = change_basis(lc_metric_cart, polar_basis_for_metric)
 
     # 8. Compare
     np.testing.assert_allclose(lc_metric_polar.components.value, g_polar_num_gt, rtol=1e-5, atol=1e-5)

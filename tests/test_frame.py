@@ -226,6 +226,13 @@ def test_frame_change_coordinates_vector_consistency():
   """
   Check that evaluating a frame vector gives the same physical vector
   before and after coordinate change.
+
+  With convention E[a,j] = E_j^a (column j = basis vector j):
+    Physical vector = E @ V where V is the component vector.
+
+  After coordinate change, the basis transforms as E_new = G @ E,
+  and components stay the same (treated as scalars in the current implementation).
+  So the new physical vector is E_new @ V = G @ E @ V = G @ (original physical).
   """
   q = jnp.array([2.0, jnp.pi/4, jnp.pi/4])
   x = spherical_to_cartesian(q)
@@ -246,14 +253,14 @@ def test_frame_change_coordinates_vector_consistency():
   v_q_obj = frame_q.get_basis_vector(0) # TangentVector
   v_x_obj = frame_x.get_basis_vector(0)
 
-  J_val = J_zq.value # dx/dq
-  J_inv = jnp.linalg.inv(J_val) # dq/dx
+  J_val = J_zq.value # G = dx/dq
 
-  v_q_std = v_q_obj.components.value @ basis_q.components.value
-  v_x_std = v_x_obj.components.value @ frame_x.basis.components.value
+  # Physical vector = basis @ components (columns are basis vectors)
+  v_q_phys = basis_q.components.value @ v_q_obj.components.value
+  v_x_phys = frame_x.basis.components.value @ v_x_obj.components.value
 
-  # Check geometric consistency
-  assert jnp.allclose(v_x_std, v_q_std @ J_inv, atol=1e-5)
+  # Check geometric consistency: v_x_phys = G @ v_q_phys
+  assert jnp.allclose(v_x_phys, J_val @ v_q_phys, atol=1e-5)
 
 def test_frame_change_coordinates_scalar_components():
   """

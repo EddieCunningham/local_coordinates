@@ -92,8 +92,8 @@ def change_coordinates(vector: TangentVector, x_to_z_jacobian: Jacobian) -> Tang
   Change coordinates for a TangentVector.
   Transforms the basis and updates the components as scalars.
   """
-  new_basis = change_coordinates_basis(vector.basis, x_to_z_jacobian)
-  new_components = change_coordinates_jet(vector.components, x_to_z_jacobian)
+  new_basis = change_coordinates_basis(vector.basis, x_to_z_jacobian) # Covariant transform
+  new_components = change_coordinates_jet(vector.components, x_to_z_jacobian) # Contravariant transform
   return TangentVector(p=vector.p, components=new_components, basis=new_basis)
 
 @dispatch

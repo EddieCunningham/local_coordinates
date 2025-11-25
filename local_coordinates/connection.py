@@ -6,15 +6,15 @@ from jax import random
 import equinox as eqx
 from jaxtyping import Array, Float, PRNGKeyArray
 from linsdex import AbstractBatchableObject
-from local_coordinates.basis import BasisVectors, get_basis_transform, get_standard_basis
+from local_coordinates.basis import BasisVectors, get_basis_transform, get_standard_basis, change_coordinates as change_coordinates_basis
 from plum import dispatch
 from local_coordinates.tensor import Tensor, change_basis
-from local_coordinates.jet import Jet
-from local_coordinates.jet import jet_decorator
+from local_coordinates.jet import Jet, jet_decorator, change_coordinates as change_coordinates_jet
 from local_coordinates.metric import RiemannianMetric
 from local_coordinates.jet import get_identity_jet
 from local_coordinates.frame import Frame, get_lie_bracket_between_frame_pairs, basis_to_frame
 from local_coordinates.tangent import TangentVector
+from local_coordinates.jacobian import Jacobian, get_inverse
 
 class Connection(AbstractBatchableObject):
   """
@@ -24,6 +24,11 @@ class Connection(AbstractBatchableObject):
   """
   basis: BasisVectors
   christoffel_symbols: Annotated[Jet, "D D N"] # The components of the Christoffel symbols written in the chosen basis
+
+  def __check_init__(self):
+    assert isinstance(self.christoffel_symbols, Jet), "christoffel_symbols must be a Jet"
+    # dim = self.basis.p.shape[0]
+    # assert self.christoffel_symbols.shape == (dim, dim, dim), f"christoffel_symbols must have shape ({dim}, {dim}, {dim})"
 
   @property
   def batch_size(self):
@@ -76,6 +81,31 @@ def change_basis(connection: Connection, new_basis: BasisVectors) -> Connection:
   E_tilde_val_jet = new_basis.components.get_value_jet()
   new_christoffel_symbols = get_components(cs_value_jet, E_tilde_val_jet, T_value_jet, T_gradient_jet)
   return Connection(basis=new_basis, christoffel_symbols=new_christoffel_symbols)
+
+@dispatch
+def change_coordinates(connection: Connection, x_to_z_jacobian: Jacobian) -> Connection:
+  r"""
+  Change coordinates for a Connection.
+
+  The connection coefficients Γ^k_{ij} are defined with respect to a basis {E_j}.
+  When we change coordinates from x to z, the basis vectors are re-expressed in z-coords,
+  but the connection coefficients (as functions of position) stay the same.
+
+  Only the derivatives of the coefficients change (via chain rule), as they are now
+  differentiated with respect to z instead of x.
+
+  NOTE: This is different from the classical Christoffel transformation formula
+  which applies when changing between COORDINATE bases. Here we keep the same basis
+  (just expressed in new coords) so the coefficients don't transform.
+  """
+  # 1. Transform basis: express the same basis vectors in the new coordinate system
+  new_basis = change_coordinates_basis(connection.basis, x_to_z_jacobian)
+
+  # 2. Transform Christoffel symbols as scalar jets: values stay the same,
+  #    but derivatives use chain rule (d/dz = (dx/dz) * d/dx)
+  new_christoffel = change_coordinates_jet(connection.christoffel_symbols, x_to_z_jacobian)
+
+  return Connection(basis=new_basis, christoffel_symbols=new_christoffel)
 
 def get_levi_civita_connection(metric: RiemannianMetric) -> Connection:
   """Get the Levi-Civita connection from a Riemannian metric in terms of the basis of the metric.

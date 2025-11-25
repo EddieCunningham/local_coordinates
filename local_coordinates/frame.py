@@ -70,9 +70,8 @@ def change_coordinates(frame: Frame, x_to_z_jacobian: Jacobian) -> Frame:
   """
   Change coordinates for a Frame using a precomputed Jacobian.
   """
-  new_basis = change_coordinates_basis(frame.basis, x_to_z_jacobian)
-  # Frame components are scalars, so we use the scalar Jet transformation
-  new_components = change_coordinates_jet(frame.components, x_to_z_jacobian)
+  new_basis = change_coordinates_basis(frame.basis, x_to_z_jacobian) # Covariant transform
+  new_components = change_coordinates_jet(frame.components, x_to_z_jacobian) # Contravariant transform
 
   return Frame(p=frame.p, components=new_components, basis=new_basis)
 

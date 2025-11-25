@@ -342,9 +342,11 @@ def test_change_coordinates():
   basis = BasisVectors(p=q, components=Jet(value=jnp.eye(3), gradient=None, hessian=None, dim=3))
   out: BasisVectors = change_coordinates(basis, spherical_to_cartesian, q)
 
-  # Expected: components transform by dxdz where z = spherical_to_cartesian(x)
-  J = jax.jacrev(spherical_to_cartesian)(q)  # dz/dx at q
-  expected = jnp.linalg.inv(J)               # dxdz at (q -> x)
+  # Basis vectors E_j^a transform as: E_new_j^i = E_j^a G_a^i
+  # With convention E[a,j] = E_j^a (column j = basis j), this is E_new = G @ E
+  # For standard basis E = I, we get E_new = G
+  J = jax.jacrev(spherical_to_cartesian)(q)  # G = dz/dq
+  expected = J                                # G (not G.T!)
 
   assert jnp.allclose(out.p, x)
   assert jnp.allclose(out.components.value, expected)
@@ -390,7 +392,11 @@ def test_change_coordinates_matches_basis_transform():
 def test_change_coordinates_standard_basis_hessian():
   """
   For a standard coordinate basis, the coordinate change should induce
-  derivatives consistent with the inverse Jacobian Jet.
+  derivatives consistent with the forward Jacobian expressed as
+  a function of the new coordinates.
+
+  The transformation is E_new = G @ E where G = dz/dq.
+  For identity E, this gives G. The derivatives are computed w.r.t. z.
   """
   q = jnp.array([1.0, jnp.pi / 4, jnp.pi / 6])
   x = spherical_to_cartesian(q)
@@ -401,20 +407,22 @@ def test_change_coordinates_standard_basis_hessian():
   # Change coordinates to x
   basis_x: BasisVectors = change_coordinates(basis_q, spherical_to_cartesian, q)
 
-  # Build Jacobian for z = spherical_to_cartesian(q) and invert it
-  dzdq = jax.jacrev(spherical_to_cartesian)(q)
-  d2zdq2 = jax.jacfwd(jax.jacrev(spherical_to_cartesian))(q)
-  d3zdq3 = jax.jacfwd(jax.jacfwd(jax.jacrev(spherical_to_cartesian)))(q)
-  from local_coordinates.jacobian import Jacobian, get_inverse
-  J_zq = Jacobian(value=dzdq, gradient=d2zdq2, hessian=d3zdq3)
-  J_qx = get_inverse(J_zq)
+  # The expected result is G where G(z) = dz/dq(q(z)) expressed as function of z.
+  # We compute this by defining the transformed components as a function of z
+  # and taking its Jet.
+  def expected_components(z):
+    # Invert to get q from z (Cartesian to spherical)
+    q_from_z = cartesian_to_spherical(z)
+    # Get the forward Jacobian at that point
+    G = jax.jacrev(spherical_to_cartesian)(q_from_z)
+    return G  # Not G.T!
 
-  # For the standard basis, components after change_coordinates should match
-  # the inverse Jacobian Jet (up to the available derivative order).
+  expected_jet = function_to_jet(expected_components, x)
+
   assert jnp.allclose(basis_x.p, x)
-  assert jnp.allclose(basis_x.components.value, J_qx.value)
-  assert jnp.allclose(basis_x.components.gradient, J_qx.gradient)
-  assert jnp.allclose(basis_x.components.hessian, J_qx.hessian)
+  assert jnp.allclose(basis_x.components.value, expected_jet.value)
+  assert jnp.allclose(basis_x.components.gradient, expected_jet.gradient)
+  assert jnp.allclose(basis_x.components.hessian, expected_jet.hessian)
 
 def test_change_coordinates_jacobian_agrees_with_function():
   """
@@ -471,14 +479,15 @@ def test_apply_contravariant_transform_vector():
   # assert jnp.allclose(W_comp.gradient, expected.gradient) # Ignore gradient because V_jet has no gradient
   # assert (W_comp.hessian is None and expected.hessian is None)
 
-def test_change_coordinates_equivalent_to_covariant_transform_plus_chain_rule():
+def test_change_coordinates_contravariant_transform_plus_chain_rule():
   """
-  Verify that change_coordinates(basis, jacobian) is equivalent to:
-  1. apply_covariant_transform(jacobian_jet, basis.components) -> components w.r.t x
-  2. change_coordinates(components_wrt_x, jacobian) -> components w.r.t z
+  Verify that change_coordinates(basis, jacobian) computes E_new = G @ E.
+
+  With convention E[a,j] = E_j^a (column j = basis vector j):
+    E_new_j^i = E_j^a G_a^i = (G @ E)[i,j]
   """
   q = jnp.array([1.0, jnp.pi / 4, jnp.pi / 6])
-  # x = spherical_to_cartesian(q)
+  x = spherical_to_cartesian(q)
 
   # Random basis
   value = random.normal(random.key(0), (3, 3))
@@ -489,20 +498,85 @@ def test_change_coordinates_equivalent_to_covariant_transform_plus_chain_rule():
   # Jacobian for transform
   J = function_to_jacobian(spherical_to_cartesian, q)
 
-  # 1. Standard change_coordinates # PREFERRED METHOD
+  # Standard change_coordinates
   basis_transformed: BasisVectors = change_coordinates(basis, J)
 
-  # 2. Manual two-step process
-  # Step A: Covariant transform (mix components)
-  # Pass the forward Jacobian as a Jet
-  J_jet = Jet(value=J.value, gradient=J.gradient, hessian=J.hessian, dim=3)
-  mixed_components_x: Jet = apply_covariant_transform(J_jet, basis.components)
+  # Verify value: E_new = G @ E
+  G = J.value
+  expected_value = G @ basis.components.value
+  assert jnp.allclose(basis_transformed.components.value, expected_value)
 
-  # Step B: Change differentiation coordinates (chain rule)
-  # We treat the components as scalar functions for this step
-  mixed_components_z: Jet = change_coordinates(mixed_components_x, J)
 
-  # Assert equivalence
-  assert jnp.allclose(basis_transformed.components.value, mixed_components_z.value)
-  assert jnp.allclose(basis_transformed.components.gradient, mixed_components_z.gradient)
-  assert jnp.allclose(basis_transformed.components.hessian, mixed_components_z.hessian)
+def test_change_coordinates_identity_map_noop():
+  """
+  For the identity coordinate change z(x) = x, change_coordinates should leave
+  the basis components (value, gradient, hessian) unchanged.
+  """
+  dim = 3
+  key = random.key(0)
+  k1, k2, k3 = random.split(key, 3)
+
+  p = jnp.array([0.3, -0.5, 1.1])
+  value = random.normal(k1, (dim, dim))
+  gradient = random.normal(k2, (dim, dim, dim))
+  hessian = random.normal(k3, (dim, dim, dim, dim))
+  basis = BasisVectors(p=p, components=Jet(value=value, gradient=gradient, hessian=hessian, dim=dim))
+
+  def identity_map(x: Array) -> Array:
+    return x
+
+  out = change_coordinates(basis, identity_map, p)
+
+  assert jnp.allclose(out.p, p)
+  assert jnp.allclose(out.components.value, basis.components.value)
+  assert jnp.allclose(out.components.gradient, basis.components.gradient)
+  assert jnp.allclose(out.components.hessian, basis.components.hessian)
+
+
+def test_change_coordinates_matches_direct_shear_function():
+  """
+  For a concrete nonlinear shear map z(x) and an explicit basis field E(x),
+  change_coordinates(basis, shear_map, x0) should match the Jet obtained by
+  directly transforming E as a function of z.
+  """
+  dim = 2
+
+  def E_func(x: Array) -> Array:
+    x1, x2 = x
+    return jnp.array([
+      [x1*x1 + x2, x1*x2],
+      [jnp.sin(x1), x2*x2 + 1.0],
+    ])
+
+  def shear_map(x: Array) -> Array:
+    x1, x2 = x
+    return jnp.array([x1, x2 + x1*x1])
+
+  def shear_inverse(z: Array) -> Array:
+    z1, z2 = z
+    return jnp.array([z1, z2 - z1*z1])
+
+  x0 = jnp.array([0.4, -0.6])
+  z0 = shear_map(x0)
+
+  # Basis in x-coordinates
+  basis_x = BasisVectors(p=x0, components=function_to_jet(E_func, x0))
+
+  # Transform using the library change_coordinates
+  basis_z = change_coordinates(basis_x, shear_map, x0)
+
+  # Directly define the transformed basis as a function of z using the tensorial rule
+  # With convention E[a,j] = E_j^a (column j = basis vector j):
+  # E_new = G @ E where G = dz/dx
+  def tilde_E_func(z: Array) -> Array:
+    x = shear_inverse(z)
+    G = jax.jacrev(shear_map)(x)  # dz/dx, shape (i, a)
+    E = E_func(x)                 # shape (a, j)
+    return G @ E                  # shape (i, j), E_new_j^i = E_j^a G_a^i
+
+  direct_jet = function_to_jet(tilde_E_func, z0)
+
+  assert jnp.allclose(basis_z.p, z0)
+  assert jnp.allclose(basis_z.components.value, direct_jet.value)
+  assert jnp.allclose(basis_z.components.gradient, direct_jet.gradient)
+  assert jnp.allclose(basis_z.components.hessian, direct_jet.hessian)

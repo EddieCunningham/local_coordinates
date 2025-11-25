@@ -8,7 +8,7 @@ from sympy import symbols
 
 from local_coordinates.jet import Jet, jet_decorator, function_to_jet, get_identity_jet
 from local_coordinates.basis import BasisVectors, get_basis_transform, get_standard_basis, apply_contravariant_transform, change_coordinates
-from local_coordinates.tangent import TangentVector, change_basis, lie_bracket, tangent_vectors_are_equivalent, pushforward, change_coordinates as change_coordinates_tangent
+from local_coordinates.tangent import TangentVector, change_basis, lie_bracket, tangent_vectors_are_equivalent, pushforward, change_coordinates
 from local_coordinates.jacobian import function_to_jacobian
 
 def test_tangent_vector_creation_fields():
@@ -525,7 +525,7 @@ def create_random_basis(key: random.PRNGKey, dim: int) -> BasisVectors:
 
 def create_random_vector_field(key: random.PRNGKey, dim: int) -> TangentVector:
   p_key, basis_key, vals_key, grads_key, hessians_key = random.split(key, 5)
-  p = jnp.zeros(dim)
+  p = random.normal(p_key, (dim,))
   random_basis = create_random_basis(basis_key, dim)
   vals = random.normal(vals_key, (dim,))
   grads = random.normal(grads_key, (dim, dim))
@@ -690,10 +690,10 @@ def test_tangent_vector_change_coordinates_round_trip():
   vec_q = TangentVector(p=q, basis=basis, components=vec_comp)
 
   J_zq = function_to_jacobian(spherical_to_cartesian, q)
-  vec_x = change_coordinates_tangent(vec_q, J_zq)
+  vec_x = change_coordinates(vec_q, J_zq)
 
   J_xz = function_to_jacobian(cartesian_to_spherical, x)
-  vec_q_restored = change_coordinates_tangent(vec_x, J_xz)
+  vec_q_restored = change_coordinates(vec_x, J_xz)
 
   assert jnp.allclose(vec_q_restored.basis.components.value, vec_q.basis.components.value, atol=1e-5)
   assert jnp.allclose(vec_q_restored.basis.components.gradient, vec_q.basis.components.gradient, atol=1e-5)
@@ -707,6 +707,13 @@ def test_tangent_vector_change_coordinates_vector_consistency():
   """
   Check that evaluating a tangent vector gives the same physical vector
   before and after coordinate change.
+
+  With convention E[a,j] = E_j^a (column j = basis vector j):
+    Physical vector = E @ V where V is the component vector.
+
+  After coordinate change, the basis transforms as E_new = G @ E,
+  and components stay the same (treated as scalars in the current implementation).
+  So the new physical vector is E_new @ V = G @ E @ V = G @ (original physical).
   """
   q = jnp.array([2.0, jnp.pi/4, jnp.pi/4])
   x = spherical_to_cartesian(q)
@@ -721,16 +728,16 @@ def test_tangent_vector_change_coordinates_vector_consistency():
   vec_q = TangentVector(p=q, basis=basis_q, components=vec_comp)
 
   J_zq = function_to_jacobian(spherical_to_cartesian, q)
-  vec_x = change_coordinates_tangent(vec_q, J_zq)
+  vec_x = change_coordinates(vec_q, J_zq)
 
-  J_val = J_zq.value # dx/dq
-  J_inv = jnp.linalg.inv(J_val) # dq/dx
+  J_val = J_zq.value # G = dx/dq
 
-  v_q_std = vec_q.components.value @ basis_q.components.value
-  v_x_std = vec_x.components.value @ vec_x.basis.components.value
+  # Physical vector = basis @ components (columns are basis vectors)
+  v_q_phys = basis_q.components.value @ vec_q.components.value
+  v_x_phys = vec_x.basis.components.value @ vec_x.components.value
 
-  # Check geometric consistency
-  assert jnp.allclose(v_x_std, v_q_std @ J_inv, atol=1e-5)
+  # Check geometric consistency: v_x_phys = G @ v_q_phys
+  assert jnp.allclose(v_x_phys, J_val @ v_q_phys, atol=1e-5)
 
 def test_tangent_vector_change_coordinates_scalar_components():
   """
@@ -752,8 +759,69 @@ def test_tangent_vector_change_coordinates_scalar_components():
   vec_q = TangentVector(p=q, basis=basis, components=comp_jet)
 
   J_zq = function_to_jacobian(shift_map, q)
-  vec_x = change_coordinates_tangent(vec_q, J_zq)
+  vec_x = change_coordinates(vec_q, J_zq)
 
   assert jnp.allclose(vec_x.components.value, comp_jet.value)
   assert jnp.allclose(vec_x.components.gradient, comp_jet.gradient)
   assert jnp.allclose(vec_x.components.hessian, comp_jet.hessian)
+
+
+def test_tangent_vector_call_coordinate_invariance():
+  """
+  Check that applying a tangent vector to a scalar function (Jet) yields
+  the same geometric directional derivative, regardless of coordinate chart.
+  """
+  dim = 3
+  key = random.key(0)
+
+  # Use a fixed spherical point (avoid issues with random points near singularities)
+  q = jnp.array([1.5, 0.9, 1.2])
+  x = spherical_to_cartesian(q)
+
+  # Create random basis and vector AT THE SAME POINT
+  k1, k2, k3, k4, k5, k6 = random.split(key, 6)
+  basis_vals = random.normal(k1, (dim, dim))
+  basis_grads = random.normal(k2, (dim, dim, dim))
+  basis_hess = random.normal(k3, (dim, dim, dim, dim))
+  random_basis = BasisVectors(p=q, components=Jet(value=basis_vals, gradient=basis_grads, hessian=basis_hess))
+
+  comp_vals = random.normal(k4, (dim,))
+  comp_grads = random.normal(k5, (dim, dim))
+  comp_hess = random.normal(k6, (dim, dim, dim))
+  X_q = TangentVector(p=q, components=Jet(value=comp_vals, gradient=comp_grads, hessian=comp_hess), basis=random_basis)
+
+  # Scalar function f and its Jet at q
+  def f(x_):
+    return x_[0]**2 + 3.0 * x_[1] - 0.7 * x_[2]
+
+  f_jet_q = function_to_jet(f, q)
+
+  # Evaluate X_q(f) in q-coordinates
+  out_q: Jet = X_q(f_jet_q)
+
+  # Coordinate change q -> x
+  J_zq = function_to_jacobian(spherical_to_cartesian, q)
+  X_x_temp: TangentVector = change_coordinates(X_q, J_zq)
+
+  # Manually update point to x-coordinates
+  X_x = TangentVector(
+    p=x,
+    basis=BasisVectors(p=x, components=X_x_temp.basis.components),
+    components=X_x_temp.components
+  )
+
+  # Transform f to x-coordinates
+  f_jet_x: Jet = change_coordinates(f_jet_q, J_zq)
+
+  # Evaluate X_x(f) in x-coordinates
+  out_x: Jet = X_x(f_jet_x)
+
+  # Transform result back to q-coordinates and compare full Jets
+  J_xz = function_to_jacobian(cartesian_to_spherical, x)
+  out_x_q: Jet = change_coordinates(out_x, J_xz)
+
+  assert jnp.allclose(out_x_q.value, out_q.value)
+  assert jnp.allclose(out_x_q.gradient, out_q.gradient)
+  # Note: Hessian comparison is skipped because computing d^2(X(f))/dx^2
+  # requires third derivatives of f, which function_to_jet doesn't provide.
+  # The inf-fill for unknown hessians propagates through and produces NaN.
