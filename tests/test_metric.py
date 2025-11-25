@@ -150,6 +150,151 @@ def test_lower_index_vector_to_covector():
 
 
 # ============================================================================
+# Tests for metric evaluation: g(X, Y)
+# ============================================================================
+
+def test_metric_call_identity_metric():
+  """
+  Test that g(X, Y) = X · Y for the identity metric.
+  """
+  from local_coordinates.tangent import TangentVector
+
+  p = jnp.array([0., 0.])
+  basis = BasisVectors(p=p, components=Jet(value=jnp.eye(2), gradient=None, hessian=None, dim=2))
+  metric = RiemannianMetric(basis=basis, components=Jet(value=jnp.eye(2), gradient=None, hessian=None, dim=2))
+
+  X = TangentVector(p=p, components=Jet(value=jnp.array([1.0, 2.0]), gradient=None, hessian=None, dim=2), basis=basis)
+  Y = TangentVector(p=p, components=Jet(value=jnp.array([3.0, 4.0]), gradient=None, hessian=None, dim=2), basis=basis)
+
+  result = metric(X, Y)
+  expected = 1.0 * 3.0 + 2.0 * 4.0  # X · Y = 11.0
+
+  assert jnp.allclose(result.value, expected)
+
+
+def test_metric_call_nontrivial_metric():
+  """
+  Test g(X, Y) = X^i g_{ij} Y^j for a non-trivial metric.
+  """
+  from local_coordinates.tangent import TangentVector
+
+  p = jnp.array([0., 0.])
+  basis = BasisVectors(p=p, components=Jet(value=jnp.eye(2), gradient=None, hessian=None, dim=2))
+  g = jnp.array([[2.0, 0.5], [0.5, 1.0]])
+  metric = RiemannianMetric(basis=basis, components=Jet(value=g, gradient=None, hessian=None, dim=2))
+
+  X = TangentVector(p=p, components=Jet(value=jnp.array([1.0, 2.0]), gradient=None, hessian=None, dim=2), basis=basis)
+  Y = TangentVector(p=p, components=Jet(value=jnp.array([3.0, 4.0]), gradient=None, hessian=None, dim=2), basis=basis)
+
+  result = metric(X, Y)
+  expected = jnp.einsum("i,ij,j->", jnp.array([1.0, 2.0]), g, jnp.array([3.0, 4.0]))
+
+  assert jnp.allclose(result.value, expected)
+
+
+def test_metric_call_symmetry():
+  """
+  Test that g(X, Y) = g(Y, X) (symmetry of metric).
+  """
+  from local_coordinates.tangent import TangentVector
+
+  p = jnp.array([0., 0.])
+  basis = BasisVectors(p=p, components=Jet(value=jnp.eye(2), gradient=None, hessian=None, dim=2))
+  g = jnp.array([[2.0, 0.5], [0.5, 1.0]])
+  metric = RiemannianMetric(basis=basis, components=Jet(value=g, gradient=None, hessian=None, dim=2))
+
+  X = TangentVector(p=p, components=Jet(value=jnp.array([1.0, 2.0]), gradient=None, hessian=None, dim=2), basis=basis)
+  Y = TangentVector(p=p, components=Jet(value=jnp.array([3.0, -1.0]), gradient=None, hessian=None, dim=2), basis=basis)
+
+  result_XY = metric(X, Y)
+  result_YX = metric(Y, X)
+
+  assert jnp.allclose(result_XY.value, result_YX.value)
+
+
+def test_metric_call_vectors_in_different_basis():
+  """
+  Test that g(X, Y) works when vectors are in a different basis than the metric.
+  """
+  from local_coordinates.tangent import TangentVector
+
+  p = jnp.array([0., 0.])
+  basis1 = BasisVectors(p=p, components=Jet(value=jnp.eye(2), gradient=None, hessian=None, dim=2))
+  B2 = jnp.array([[1.0, 0.5], [0.0, 1.0]])
+  basis2 = BasisVectors(p=p, components=Jet(value=B2, gradient=None, hessian=None, dim=2))
+
+  g = jnp.array([[2.0, 0.5], [0.5, 1.0]])
+  metric = RiemannianMetric(basis=basis1, components=Jet(value=g, gradient=None, hessian=None, dim=2))
+
+  # Create vectors in basis2
+  X_comp = jnp.array([1.0, 0.0])
+  Y_comp = jnp.array([0.0, 1.0])
+  X = TangentVector(p=p, components=Jet(value=X_comp, gradient=None, hessian=None, dim=2), basis=basis2)
+  Y = TangentVector(p=p, components=Jet(value=Y_comp, gradient=None, hessian=None, dim=2), basis=basis2)
+
+  result = metric(X, Y)
+
+  # Manually compute: transform X, Y to basis1, then compute g(X, Y)
+  # X in basis2 has coords [1, 0], which means X = 1 * e1_basis2 = 1 * (1*e1 + 0*e2) = e1 in coords
+  # Actually, basis2 columns are the basis vectors in coordinates
+  # X = X_comp[0] * basis2[:,0] + X_comp[1] * basis2[:,1] in coordinates
+  X_coords = B2 @ X_comp  # [1, 0] in standard coordinates
+  Y_coords = B2 @ Y_comp  # [0.5, 1] in standard coordinates
+
+  # Since metric is in basis1 (standard basis), we need X, Y components in basis1
+  # For standard basis, components = coordinates
+  expected = jnp.einsum("i,ij,j->", X_coords, g, Y_coords)
+
+  assert jnp.allclose(result.value, expected)
+
+
+def test_metric_call_with_gradients():
+  """
+  Test that g(X, Y) correctly computes gradients via jet arithmetic.
+  """
+  from local_coordinates.tangent import TangentVector
+
+  dim = 2
+  p = jnp.array([0., 0.])
+  basis = BasisVectors(p=p, components=Jet(
+    value=jnp.eye(dim),
+    gradient=jnp.zeros((dim, dim, dim)),
+    hessian=jnp.zeros((dim, dim, dim, dim))
+  ))
+
+  g_val = jnp.array([[2.0, 0.5], [0.5, 1.0]])
+  g_grad = jnp.array([[[0.1, 0.0], [0.0, 0.1]], [[0.0, 0.1], [0.1, 0.0]]])
+  metric = RiemannianMetric(basis=basis, components=Jet(
+    value=g_val,
+    gradient=g_grad,
+    hessian=jnp.zeros((dim, dim, dim, dim))
+  ))
+
+  X_val = jnp.array([1.0, 0.0])
+  Y_val = jnp.array([0.0, 1.0])
+  X = TangentVector(p=p, components=Jet(
+    value=X_val,
+    gradient=jnp.zeros((dim, dim)),
+    hessian=jnp.zeros((dim, dim, dim))
+  ), basis=basis)
+  Y = TangentVector(p=p, components=Jet(
+    value=Y_val,
+    gradient=jnp.zeros((dim, dim)),
+    hessian=jnp.zeros((dim, dim, dim))
+  ), basis=basis)
+
+  result = metric(X, Y)
+
+  # g(X, Y) = X^i g_{ij} Y^j = g_{01} = 0.5
+  assert jnp.allclose(result.value, 0.5)
+
+  # Gradient: d/dx^k (X^i g_{ij} Y^j) = X^i (dg_{ij}/dx^k) Y^j
+  # = 1 * g_grad[0, 1, k] * 1 = g_grad[0, 1, :]
+  expected_grad = g_grad[0, 1, :]
+  assert jnp.allclose(result.gradient, expected_grad)
+
+
+# ============================================================================
 # Tests for change_coordinates on RiemannianMetric
 # ============================================================================
 

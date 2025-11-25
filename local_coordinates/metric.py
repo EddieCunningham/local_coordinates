@@ -10,6 +10,7 @@ from plum import dispatch
 from local_coordinates.jet import Jet, jet_decorator
 from local_coordinates.basis import BasisVectors, get_dual_basis_transform
 from local_coordinates.tensor import Tensor, TensorType
+from local_coordinates.tangent import TangentVector, change_basis
 
 class RiemannianMetric(Tensor):
   """
@@ -37,6 +38,17 @@ class RiemannianMetric(Tensor):
       raise ValueError(
         f"Batch shape mismatch: basis implies {expected_batch_shape} but components have {actual_batch_shape}"
       )
+
+  def __call__(self, X: TangentVector, Y: TangentVector) -> Jet:
+    """
+    Evaluate the metric at two tangent vectors.
+    """
+    X: TangentVector = change_basis(X, self.basis)
+    Y: TangentVector = change_basis(Y, self.basis)
+    @jet_decorator
+    def components(X_val, Y_val, g_val):
+      return jnp.einsum("i,ij,j->...", X_val, g_val, Y_val)
+    return components(X.components.get_value_jet(), Y.components.get_value_jet(), self.components.get_value_jet())
 
 def raise_index(tensor: Tensor, metric: RiemannianMetric, index: int) -> Tensor:
   """
