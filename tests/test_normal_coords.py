@@ -7,7 +7,7 @@ from local_coordinates.basis import BasisVectors, get_standard_basis, change_coo
 from local_coordinates.jet import Jet
 from local_coordinates.metric import RiemannianMetric, lower_index
 from local_coordinates.connection import get_levi_civita_connection
-from local_coordinates.riemann import get_riemann_curvature_tensor, RiemannCurvatureTensor
+from local_coordinates.riemann import get_riemann_curvature_tensor, RiemannCurvatureTensor, RicciTensor, get_ricci_tensor
 from local_coordinates.tensor import Tensor, TensorType, change_basis
 from local_coordinates.normal_coords import (
   get_transformation_to_riemann_normal_coordinates,
@@ -1458,9 +1458,8 @@ def test_metric_log_det_hessian():
   log_det_hessian = log_det.hessian
 
   # Compare against the ricci tensor
-  R: RiemannCurvatureTensor = get_riemann_curvature_tensor(get_levi_civita_connection(metric_rnc))
-  R_val = R.components.value
-  ricci = jnp.einsum("iabi->ab", R_val)
+  Rc: RicciTensor = get_ricci_tensor(get_levi_civita_connection(metric_rnc))
+  ricci = Rc.components.value
 
   assert jnp.allclose(log_det_hessian, -2.0/3.0 * ricci, atol=1e-5)
 

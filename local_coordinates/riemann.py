@@ -25,7 +25,7 @@ class RiemannCurvatureTensor(Tensor):
   connection, the components of the tensor are given by:
   {R_{ijk}}^m = E_i(\Gamma^m_{jk}) - E_j(\Gamma^m_{ik}) + \Gamma^l_{jk}\Gamma^m_{il} - \Gamma^l_{ik}\Gamma^m_{jl} - c^l_{ij}\Gamma^m_{lk}
   """
-  tensor_type: TensorType = eqx.field(static=True)
+  tensor_type: TensorType = eqx.field(static=True) # Always TensorType(k=3, l=1)
   basis: BasisVectors
   components: Annotated[Jet, "D D D D"] # The components of the tensor written in the chosen basis
 
@@ -99,4 +99,48 @@ def get_riemann_curvature_tensor(connection: Connection) -> RiemannCurvatureTens
     tensor_type=TensorType(k=3, l=1),
     basis=basis,
     components=riemann_components
+  )
+
+
+class RicciTensor(Tensor):
+  """
+  (2, 0) Ricci curvature tensor.
+  """
+  tensor_type: TensorType = eqx.field(static=True) # Always TensorType(k=2, l=0)
+  basis: BasisVectors
+  components: Annotated[Jet, "D D"] # The components of the tensor written in the chosen basis
+
+  @property
+  def batch_size(self):
+    return self.basis.batch_size
+
+  def __check_init__(self):
+    super().__check_init__()
+    if self.components.shape[-2] != self.components.shape[-1]:
+      raise ValueError(f"Ricci tensor must be a 2-index tensor")
+
+    expected_batch_shape = self.basis.p.shape[:-1]
+    actual_batch_shape = self.components.shape[:-2]
+    if expected_batch_shape != actual_batch_shape:
+        raise ValueError(
+            f"Batch shape mismatch: basis implies {expected_batch_shape} but components have {actual_batch_shape}"
+        )
+
+def get_ricci_tensor(connection: Connection, R: Optional[RiemannCurvatureTensor] = None) -> RicciTensor:
+  """
+  Get the (2, 0) Ricci curvature tensor from a connection.
+  """
+  if R is None:
+    R: RiemannCurvatureTensor = get_riemann_curvature_tensor(connection)
+
+  @jet_decorator
+  def get_ricci_components(R_val) -> Array:
+    return jnp.einsum("iabi->ab", R_val)
+
+  ricci_components: Jet = get_ricci_components(R.components.get_value_jet())
+
+  return RicciTensor(
+    tensor_type=TensorType(k=2, l=0),
+    basis=connection.basis,
+    components=ricci_components
   )

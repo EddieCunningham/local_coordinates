@@ -6,7 +6,7 @@ from local_coordinates.metric import RiemannianMetric, lower_index
 from local_coordinates.basis import get_standard_basis
 from local_coordinates.jet import function_to_jet
 from local_coordinates.connection import get_levi_civita_connection
-from local_coordinates.riemann import RiemannCurvatureTensor, get_riemann_curvature_tensor
+from local_coordinates.riemann import RiemannCurvatureTensor, get_riemann_curvature_tensor, RicciTensor, get_ricci_tensor
 from local_coordinates.basis import BasisVectors
 from local_coordinates.frame import get_lie_bracket_between_frame_pairs, basis_to_frame
 from local_coordinates.jet import Jet, jet_decorator, get_identity_jet
@@ -548,3 +548,116 @@ def test_riemann_tensor_type_preserved():
 
   assert riemann_polar.tensor_type.k == 3
   assert riemann_polar.tensor_type.l == 1
+
+
+# ============================================================================
+# Tests for Ricci tensor
+# ============================================================================
+
+def test_ricci_tensor_returns_correct_type():
+  """
+  Test that get_ricci_tensor returns a RicciTensor with correct tensor type.
+  """
+  key = random.PRNGKey(70)
+  dim = 4
+  metric = create_random_metric(key, dim)
+  connection = get_levi_civita_connection(metric)
+
+  ricci = get_ricci_tensor(connection)
+
+  assert isinstance(ricci, RicciTensor)
+  assert ricci.tensor_type.k == 2
+  assert ricci.tensor_type.l == 0
+  assert ricci.components.value.shape == (dim, dim)
+
+
+def test_ricci_tensor_contraction():
+  """
+  Test that Ricci tensor is the correct contraction of Riemann: R_{ab} = R^i_{aib}.
+  """
+  key = random.PRNGKey(71)
+  dim = 4
+  metric = create_random_metric(key, dim)
+  connection = get_levi_civita_connection(metric)
+  riemann = get_riemann_curvature_tensor(connection)
+
+  ricci = get_ricci_tensor(connection, R=riemann)
+
+  # Manual contraction: R_{ab} = R^i_{aib} = R_{iabi} with upper index last
+  R = riemann.components.value
+  expected = jnp.einsum("iabi->ab", R)
+
+  assert jnp.allclose(ricci.components.value, expected)
+
+
+def test_ricci_tensor_symmetry():
+  """
+  Test that Ricci tensor is symmetric for Levi-Civita connection.
+  """
+  key = random.PRNGKey(72)
+  dim = 5
+  metric = create_random_metric(key, dim)
+  connection = get_levi_civita_connection(metric)
+
+  ricci = get_ricci_tensor(connection)
+  Ric = ricci.components.value
+
+  assert jnp.allclose(Ric, Ric.T)
+
+
+def test_ricci_tensor_with_and_without_precomputed_riemann():
+  """
+  Test that passing R explicitly gives the same result as computing it internally.
+  """
+  key = random.PRNGKey(73)
+  dim = 4
+  metric = create_random_metric(key, dim)
+  connection = get_levi_civita_connection(metric)
+  riemann = get_riemann_curvature_tensor(connection)
+
+  ricci_with_R = get_ricci_tensor(connection, R=riemann)
+  ricci_without_R = get_ricci_tensor(connection)
+
+  assert jnp.allclose(ricci_with_R.components.value, ricci_without_R.components.value)
+
+
+def test_ricci_scalar_basis_independence():
+  """
+  Test that the Ricci scalar R = g^{ab} R_{ab} is independent of the basis.
+  """
+  key = random.PRNGKey(74)
+  dim = 4
+  metric = create_random_metric(key, dim)
+  connection = get_levi_civita_connection(metric)
+  ricci = get_ricci_tensor(connection)
+
+  g = metric.components.value
+  g_inv = jnp.linalg.inv(g)
+  Ric = ricci.components.value
+  ricci_scalar = jnp.einsum("ab,ab->", g_inv, Ric)
+
+  # Change to standard basis and recompute
+  metric_std = change_basis(metric, get_standard_basis(metric.basis.p))
+  connection_std = get_levi_civita_connection(metric_std)
+  ricci_std = get_ricci_tensor(connection_std)
+
+  g_std = metric_std.components.value
+  g_inv_std = jnp.linalg.inv(g_std)
+  Ric_std = ricci_std.components.value
+  ricci_scalar_std = jnp.einsum("ab,ab->", g_inv_std, Ric_std)
+
+  assert jnp.allclose(ricci_scalar, ricci_scalar_std)
+
+
+def test_ricci_tensor_flat_metric():
+  """
+  Test that Ricci tensor vanishes for a flat metric.
+  """
+  dim = 4
+  p = jnp.zeros(dim)
+  metric = RiemannianMetric(basis=get_standard_basis(p), components=get_identity_jet(dim))
+  connection = get_levi_civita_connection(metric)
+
+  ricci = get_ricci_tensor(connection)
+
+  assert jnp.allclose(ricci.components.value, 0.0)
