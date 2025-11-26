@@ -11,6 +11,8 @@ from local_coordinates.riemann import get_riemann_curvature_tensor, RiemannCurva
 from local_coordinates.tensor import Tensor, TensorType, change_basis
 from local_coordinates.normal_coords import (
   get_transformation_to_riemann_normal_coordinates,
+  get_transformation_from_riemann_normal_coordinates,
+  get_rnc_jacobians,
   get_rnc_basis,
   to_riemann_normal_coordinates,
   get_rnc_frame
@@ -24,6 +26,8 @@ from jaxtyping import Array, Scalar
 from typing import Annotated, Callable
 import equinox as eqx
 from local_coordinates.frame import get_lie_bracket_between_frame_pairs
+from local_coordinates.normal_coords import _get_rnc_jacobian
+import jax
 
 
 def create_random_basis(key: random.PRNGKey, dim: int, p: Array = None) -> BasisVectors:
@@ -1459,3 +1463,336 @@ def test_metric_log_det_hessian():
   ricci = jnp.einsum("iabi->ab", R_val)
 
   assert jnp.allclose(log_det_hessian, -2.0/3.0 * ricci, atol=1e-5)
+
+
+# =============================================================================
+# Tests for new optimized API functions
+# =============================================================================
+
+def test_get_rnc_jacobians_returns_both():
+  """
+  Test that get_rnc_jacobians returns both jacobians correctly.
+  """
+  from local_coordinates.normal_coords import get_rnc_jacobians
+
+  key = random.PRNGKey(100)
+  dim = 3
+  metric = create_random_metric(key, dim=dim)
+
+  J_x_to_v, J_v_to_x = get_rnc_jacobians(metric)
+
+  # Check that they are inverses of each other (at value level)
+  product = J_x_to_v.value @ J_v_to_x.value
+  assert jnp.allclose(product, jnp.eye(dim), atol=1e-10)
+
+
+def test_get_rnc_jacobians_matches_individual_functions():
+  """
+  Test that get_rnc_jacobians matches the individual functions.
+  """
+  from local_coordinates.normal_coords import (
+    get_rnc_jacobians,
+    get_transformation_to_riemann_normal_coordinates,
+    get_transformation_from_riemann_normal_coordinates
+  )
+
+  key = random.PRNGKey(101)
+  dim = 3
+  metric = create_random_metric(key, dim=dim)
+
+  J_x_to_v_combined, J_v_to_x_combined = get_rnc_jacobians(metric)
+  J_x_to_v_individual = get_transformation_to_riemann_normal_coordinates(metric)
+  J_v_to_x_individual = get_transformation_from_riemann_normal_coordinates(metric)
+
+  assert jnp.allclose(J_x_to_v_combined.value, J_x_to_v_individual.value, atol=1e-10)
+  assert jnp.allclose(J_x_to_v_combined.gradient, J_x_to_v_individual.gradient, atol=1e-10)
+  assert jnp.allclose(J_x_to_v_combined.hessian, J_x_to_v_individual.hessian, atol=1e-10)
+
+  assert jnp.allclose(J_v_to_x_combined.value, J_v_to_x_individual.value, atol=1e-10)
+  assert jnp.allclose(J_v_to_x_combined.gradient, J_v_to_x_individual.gradient, atol=1e-10)
+  assert jnp.allclose(J_v_to_x_combined.hessian, J_v_to_x_individual.hessian, atol=1e-10)
+
+
+def test_get_rnc_basis_with_precomputed_jacobian():
+  """
+  Test that get_rnc_basis gives the same result with a precomputed jacobian.
+  """
+  from local_coordinates.normal_coords import get_rnc_jacobians
+
+  key = random.PRNGKey(102)
+  dim = 3
+  metric = create_random_metric(key, dim=dim)
+
+  # Compute without precomputed jacobian
+  rnc_basis_default = get_rnc_basis(metric)
+
+  # Compute with precomputed jacobian
+  _, J_v_to_x = get_rnc_jacobians(metric)
+  rnc_basis_precomputed = get_rnc_basis(metric, J_v_to_x=J_v_to_x)
+
+  assert jnp.allclose(
+    rnc_basis_default.components.value,
+    rnc_basis_precomputed.components.value,
+    atol=1e-10
+  )
+  assert jnp.allclose(
+    rnc_basis_default.components.gradient,
+    rnc_basis_precomputed.components.gradient,
+    atol=1e-10
+  )
+  assert jnp.allclose(
+    rnc_basis_default.components.hessian,
+    rnc_basis_precomputed.components.hessian,
+    atol=1e-10
+  )
+
+
+def test_get_rnc_frame_with_precomputed_jacobian():
+  """
+  Test that get_rnc_frame gives the same result with a precomputed jacobian.
+  """
+  from local_coordinates.normal_coords import get_rnc_jacobians
+
+  key = random.PRNGKey(103)
+  dim = 3
+  metric = create_random_metric(key, dim=dim)
+
+  # Compute without precomputed jacobian
+  rnc_frame_default = get_rnc_frame(metric)
+
+  # Compute with precomputed jacobian
+  _, J_v_to_x = get_rnc_jacobians(metric)
+  rnc_frame_precomputed = get_rnc_frame(metric, J_v_to_x=J_v_to_x)
+
+  assert jnp.allclose(
+    rnc_frame_default.components.value,
+    rnc_frame_precomputed.components.value,
+    atol=1e-10
+  )
+  assert jnp.allclose(
+    rnc_frame_default.basis.components.value,
+    rnc_frame_precomputed.basis.components.value,
+    atol=1e-10
+  )
+
+
+def test_to_rnc_metric_with_precomputed_jacobians():
+  """
+  Test that to_riemann_normal_coordinates(metric) gives the same result
+  with precomputed jacobians.
+  """
+  from local_coordinates.normal_coords import get_rnc_jacobians
+
+  key = random.PRNGKey(104)
+  dim = 3
+  metric = create_random_metric(key, dim=dim)
+
+  # Compute without precomputed jacobians
+  metric_rnc_default = to_riemann_normal_coordinates(metric)
+
+  # Compute with precomputed jacobians
+  J_x_to_v, J_v_to_x = get_rnc_jacobians(metric)
+  metric_rnc_precomputed = to_riemann_normal_coordinates(
+    metric, J_x_to_v=J_x_to_v, J_v_to_x=J_v_to_x
+  )
+
+  assert jnp.allclose(
+    metric_rnc_default.components.value,
+    metric_rnc_precomputed.components.value,
+    atol=1e-10
+  )
+  assert jnp.allclose(
+    metric_rnc_default.components.gradient,
+    metric_rnc_precomputed.components.gradient,
+    atol=1e-10
+  )
+
+
+def test_to_rnc_vector_with_precomputed_jacobians():
+  """
+  Test that to_riemann_normal_coordinates(vector, metric) gives the same result
+  with precomputed jacobians.
+  """
+  from local_coordinates.normal_coords import get_rnc_jacobians
+
+  key = random.PRNGKey(105)
+  dim = 3
+  metric = create_random_metric(key, dim=dim)
+  vector = create_random_vector_field(key, dim, metric.basis)
+
+  # Compute without precomputed jacobians
+  vector_rnc_default = to_riemann_normal_coordinates(vector, metric)
+
+  # Compute with precomputed jacobians
+  J_x_to_v, J_v_to_x = get_rnc_jacobians(metric)
+  vector_rnc_precomputed = to_riemann_normal_coordinates(
+    vector, metric, J_x_to_v=J_x_to_v, J_v_to_x=J_v_to_x
+  )
+
+  assert jnp.allclose(
+    vector_rnc_default.components.value,
+    vector_rnc_precomputed.components.value,
+    atol=1e-10
+  )
+  assert jnp.allclose(
+    vector_rnc_default.components.gradient,
+    vector_rnc_precomputed.components.gradient,
+    atol=1e-10
+  )
+
+
+def test_to_rnc_frame_with_precomputed_jacobians():
+  """
+  Test that to_riemann_normal_coordinates(frame, metric) gives the same result
+  with precomputed jacobians.
+  """
+  from local_coordinates.normal_coords import get_rnc_jacobians
+
+  key = random.PRNGKey(106)
+  dim = 3
+  metric = create_random_metric(key, dim=dim)
+  frame = basis_to_frame(metric.basis)
+
+  # Compute without precomputed jacobians
+  frame_rnc_default = to_riemann_normal_coordinates(frame, metric)
+
+  # Compute with precomputed jacobians
+  J_x_to_v, J_v_to_x = get_rnc_jacobians(metric)
+  frame_rnc_precomputed = to_riemann_normal_coordinates(
+    frame, metric, J_x_to_v=J_x_to_v, J_v_to_x=J_v_to_x
+  )
+
+  assert jnp.allclose(
+    frame_rnc_default.components.value,
+    frame_rnc_precomputed.components.value,
+    atol=1e-10
+  )
+  assert jnp.allclose(
+    frame_rnc_default.basis.components.value,
+    frame_rnc_precomputed.basis.components.value,
+    atol=1e-10
+  )
+
+
+def test_to_rnc_tensor_with_precomputed_jacobians():
+  """
+  Test that to_riemann_normal_coordinates(tensor, metric) gives the same result
+  with precomputed jacobians.
+  """
+  from local_coordinates.normal_coords import get_rnc_jacobians
+
+  key = random.PRNGKey(107)
+  dim = 3
+  metric = create_random_metric(key, dim=dim)
+  tensor = create_random_tensor(key, dim, metric.basis, k=1, l=2)
+
+  # Compute without precomputed jacobians
+  tensor_rnc_default = to_riemann_normal_coordinates(tensor, metric)
+
+  # Compute with precomputed jacobians
+  J_x_to_v, J_v_to_x = get_rnc_jacobians(metric)
+  tensor_rnc_precomputed = to_riemann_normal_coordinates(
+    tensor, metric, J_x_to_v=J_x_to_v, J_v_to_x=J_v_to_x
+  )
+
+  assert jnp.allclose(
+    tensor_rnc_default.components.value,
+    tensor_rnc_precomputed.components.value,
+    atol=1e-10
+  )
+  assert jnp.allclose(
+    tensor_rnc_default.components.gradient,
+    tensor_rnc_precomputed.components.gradient,
+    atol=1e-10
+  )
+
+
+def test_to_rnc_connection_with_precomputed_jacobians():
+  """
+  Test that to_riemann_normal_coordinates(connection, metric) gives the same result
+  with precomputed jacobians.
+  """
+  from local_coordinates.normal_coords import get_rnc_jacobians
+
+  key = random.PRNGKey(108)
+  dim = 3
+  metric = create_random_metric(key, dim=dim)
+  connection = get_levi_civita_connection(metric)
+
+  # Compute without precomputed jacobians
+  connection_rnc_default = to_riemann_normal_coordinates(connection, metric)
+
+  # Compute with precomputed jacobians
+  J_x_to_v, J_v_to_x = get_rnc_jacobians(metric)
+  connection_rnc_precomputed = to_riemann_normal_coordinates(
+    connection, metric, J_x_to_v=J_x_to_v, J_v_to_x=J_v_to_x
+  )
+
+  assert jnp.allclose(
+    connection_rnc_default.christoffel_symbols.value,
+    connection_rnc_precomputed.christoffel_symbols.value,
+    atol=1e-10
+  )
+  assert jnp.allclose(
+    connection_rnc_default.christoffel_symbols.gradient,
+    connection_rnc_precomputed.christoffel_symbols.gradient,
+    atol=1e-10
+  )
+
+
+def test_transform_multiple_objects_with_shared_jacobians():
+  """
+  Test a realistic workflow where multiple objects are transformed to RNC
+  using shared precomputed jacobians.
+  """
+  from local_coordinates.normal_coords import get_rnc_jacobians
+
+  key = random.PRNGKey(109)
+  dim = 3
+  metric = create_random_metric(key, dim=dim)
+  connection = get_levi_civita_connection(metric)
+  R = get_riemann_curvature_tensor(connection)
+  R_lower = lower_index(R, metric, 4)
+  frame = get_rnc_frame(metric)
+  vector = frame.get_basis_vector(0)
+
+  # Compute jacobians once
+  J_x_to_v, J_v_to_x = get_rnc_jacobians(metric)
+
+  # Transform all objects using shared jacobians
+  metric_rnc = to_riemann_normal_coordinates(metric, J_x_to_v=J_x_to_v, J_v_to_x=J_v_to_x)
+  connection_rnc = to_riemann_normal_coordinates(connection, metric, J_x_to_v=J_x_to_v, J_v_to_x=J_v_to_x)
+  R_rnc = to_riemann_normal_coordinates(R_lower, metric, J_x_to_v=J_x_to_v, J_v_to_x=J_v_to_x)
+  frame_rnc = to_riemann_normal_coordinates(frame, metric, J_x_to_v=J_x_to_v, J_v_to_x=J_v_to_x)
+  vector_rnc = to_riemann_normal_coordinates(vector, metric, J_x_to_v=J_x_to_v, J_v_to_x=J_v_to_x)
+
+  # Verify expected RNC properties
+  assert jnp.allclose(metric_rnc.components.value, jnp.eye(dim), atol=1e-5)
+  assert jnp.allclose(metric_rnc.components.gradient, 0.0, atol=1e-5)
+  assert jnp.allclose(connection_rnc.christoffel_symbols.value, 0.0, atol=1e-5)
+  assert jnp.allclose(frame_rnc.basis.components.value, jnp.eye(dim), atol=1e-5)
+
+
+def test_get_transformation_from_rnc_direct():
+  """
+  Test that get_transformation_from_riemann_normal_coordinates gives the correct
+  forward jacobian without going through an inversion.
+  """
+  from local_coordinates.normal_coords import (
+    get_transformation_from_riemann_normal_coordinates,
+    get_rnc_jacobians
+  )
+
+  key = random.PRNGKey(110)
+  dim = 3
+  metric = create_random_metric(key, dim=dim)
+
+  # Get J_v_to_x directly
+  J_v_to_x_direct = get_transformation_from_riemann_normal_coordinates(metric)
+
+  # Get via get_rnc_jacobians
+  _, J_v_to_x_combined = get_rnc_jacobians(metric)
+
+  assert jnp.allclose(J_v_to_x_direct.value, J_v_to_x_combined.value, atol=1e-10)
+  assert jnp.allclose(J_v_to_x_direct.gradient, J_v_to_x_combined.gradient, atol=1e-10)
+  assert jnp.allclose(J_v_to_x_direct.hessian, J_v_to_x_combined.hessian, atol=1e-10)
