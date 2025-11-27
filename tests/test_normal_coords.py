@@ -8,7 +8,7 @@ from local_coordinates.jet import Jet
 from local_coordinates.metric import RiemannianMetric, lower_index
 from local_coordinates.connection import get_levi_civita_connection
 from local_coordinates.riemann import get_riemann_curvature_tensor, RiemannCurvatureTensor, RicciTensor, get_ricci_tensor
-from local_coordinates.tensor import Tensor, TensorType, change_basis
+from local_coordinates.tensor import Tensor, TensorType, change_basis, change_coordinates as change_coordinates_tensor
 from local_coordinates.normal_coords import (
   get_transformation_to_riemann_normal_coordinates,
   get_transformation_from_riemann_normal_coordinates,
@@ -1795,3 +1795,208 @@ def test_get_transformation_from_rnc_direct():
   assert jnp.allclose(J_v_to_x_direct.value, J_v_to_x_combined.value, atol=1e-10)
   assert jnp.allclose(J_v_to_x_direct.gradient, J_v_to_x_combined.gradient, atol=1e-10)
   assert jnp.allclose(J_v_to_x_direct.hessian, J_v_to_x_combined.hessian, atol=1e-10)
+
+
+# =============================================================================
+# Principal Ricci coordinates
+# =============================================================================
+
+
+def test_principal_ricci_coordinates():
+  """
+  Construct "principal Ricci coordinates" - Riemann normal coordinates (RNC) in which the
+  Ricci tensor is diagonal at the origin.
+
+  Background
+  ----------
+  In standard RNC, the metric is the identity at the origin and Christoffel symbols vanish,
+  but the Ricci tensor is generally NOT diagonal. By choosing a specific orthonormal frame
+  aligned with the eigenvectors of the Ricci tensor, we can construct RNC where Ric is diagonal.
+
+  Construction
+  ------------
+  1. Start with a metric g in standard coordinates (x-coordinates).
+
+  2. Compute standard RNC and the Ricci tensor there. The Ricci tensor Ric_rnc is symmetric,
+     so it can be diagonalized: Ric_rnc = Q @ diag(λ) @ Q^T, where Q is orthogonal.
+
+  3. Compute the orthonormal frame E that diagonalizes the metric: E^T g E = I.
+     This E takes us from x-coordinates to standard RNC.
+
+  4. Compose E with Q to get the "principal Ricci frame": dxds = E @ Q.
+     This frame is still orthonormal with respect to g: (EQ)^T g (EQ) = Q^T (E^T g E) Q = Q^T I Q = I.
+     The RNC built from this frame will have a diagonal Ricci tensor.
+
+  5. Use _get_rnc_jacobian to compute the full Jacobian J_s_to_x from principal Ricci coords (s)
+     to standard coords (x), including higher-order corrections from the Christoffel symbols.
+
+  6. Transform the metric to principal Ricci coordinates using to_riemann_normal_coordinates.
+
+  Verification
+  ------------
+  This test verifies:
+
+  1. **Ricci is diagonal**: In principal Ricci coordinates, ricci_s.components.value should be
+     a diagonal matrix (the eigenvalues of the Ricci tensor).
+
+  2. **Ricci scalar is invariant**: The Ricci scalar R = trace(Ric) should be the same whether
+     computed in standard RNC or principal Ricci RNC, since it's a coordinate-invariant quantity.
+
+  TODO
+  ----
+  Verify that ricci_s can be transformed back to ricci.
+
+  Intended Approach (Logic):
+  1. change_coordinates(ricci_s, J_s_to_x):
+     Changes the parameterization of the tensor from s-coordinates to x-coordinates.
+     The basis vectors are re-expressed (e_s -> J e_x), but the component VALUES remain
+     unchanged (still the diagonal matrix) because the tensor object itself represents
+     the same geometric object.
+
+  2. change_basis(..., metric.basis):
+     Transforms the component values from the s-basis (now expressed in x-coords)
+     to the metric basis (standard x-basis). This applies the tensor transformation law.
+
+  (Note: This check is currently commented out due to numerical issues in the implementation,
+   but the logic is verified by test_change_coordinates_then_change_basis_recovers_original)
+  """
+  key = random.PRNGKey(0)
+  dim = 5
+
+  # Compute all of these in the standard basis.
+  metric = create_random_metric(key, dim=dim)
+
+  # This test will only work in the standard basis because gamma_bar is computed in the standard basis
+  # when we call _compute_rnc_jacobians.
+  standard_basis = get_standard_basis(metric.basis.p)
+  metric: RiemannianMetric = change_basis(metric, standard_basis)
+
+  connection: Connection = get_levi_civita_connection(metric)
+  ricci = get_ricci_tensor(connection)
+
+  # First go to standard RNC and compute Ricci there.
+  metric_rnc = to_riemann_normal_coordinates(metric)
+  connection_rnc: Connection = get_levi_civita_connection(metric_rnc)
+  ricci_rnc = get_ricci_tensor(connection_rnc)
+  eigvals_rnc, Q = jnp.linalg.eigh(ricci_rnc.components.value)  # Q rotates RNC to diagonalize Ricci
+
+  # Get the orthonormal frame E that takes standard coords to RNC.
+  # E orthonormalizes g: E^T g E = I
+  gij = metric.components.value
+  eigenvalues, eigenvectors = jnp.linalg.eigh(gij)
+  E = jnp.einsum("ij,j->ij", eigenvectors, jax.lax.rsqrt(eigenvalues))
+
+  # Principal Ricci frame: compose E with Q.
+  # dx/ds = E @ Q, where s are principal Ricci coords.
+  # This is still orthonormal: (EQ)^T g (EQ) = Q^T E^T g E Q = Q^T I Q = I
+  dxds = E @ Q
+
+  # Get the transformation from principal Ricci coordinates to the standard basis.
+  gamma_bar = connection.christoffel_symbols
+  J_s_to_x = _get_rnc_jacobian(gamma_bar, dxds)
+
+  # Go to the principal Ricci coordinates.
+  metric_s = to_riemann_normal_coordinates(metric, J_v_to_x=J_s_to_x)
+  connection_s: Connection = get_levi_civita_connection(metric_s)
+  ricci_s = get_ricci_tensor(connection_s)
+
+  assert jnp.allclose(ricci_s.components.value, jnp.diag(jnp.diag(ricci_s.components.value)))
+
+  # Verify the Ricci scalar is invariant between standard RNC and principal Ricci RNC.
+  # Both should give the same scalar since they're both RNC for the same metric.
+  ricci_scalar_rnc = jnp.trace(ricci_rnc.components.value)
+  ricci_scalar_s = jnp.trace(ricci_s.components.value)
+  assert jnp.allclose(ricci_scalar_rnc, ricci_scalar_s), "Ricci scalar should match between RNC variants"
+
+  # Transform ricci_s back to the original coordinates and verify it matches ricci.
+  # 1. change_coordinates: re-describe s-basis in x-coordinates (values unchanged)
+  # 2. change_basis: transform values to the standard x-basis
+  ricci_in_x_coords = change_coordinates_tensor(ricci_s, J_s_to_x)
+  ricci_recovered = change_basis(ricci_in_x_coords, metric.basis)
+
+  assert jnp.allclose(ricci_recovered.components.value, ricci.components.value), \
+    "Should recover original Ricci tensor components"
+
+
+def test_ricci_scalar_invariance_under_rnc():
+  """
+  Test that the Ricci scalar is invariant under transformation to RNC.
+
+  The Ricci scalar R = g^{ab} R_{ab} is a coordinate-invariant quantity.
+  It should have the same value whether computed in:
+  - The original coordinates (standard basis, non-identity metric components)
+  - Riemann normal coordinates (identity metric at origin)
+
+  NOTE: create_random_metric returns a metric in the STANDARD basis, so
+  metric.components.value is NOT identity. You must use g^{ab} R_ab, not trace(R).
+  """
+  key = random.PRNGKey(0)
+  dim = 5
+
+  # Create a metric - NOTE: this is in the standard basis, not a random basis!
+  # The metric components are NOT identity.
+  metric = create_random_metric(key, dim=dim)
+  connection = get_levi_civita_connection(metric)
+  ricci = get_ricci_tensor(connection)
+
+  # Transform to standard RNC
+  metric_rnc = to_riemann_normal_coordinates(metric)
+  connection_rnc = get_levi_civita_connection(metric_rnc)
+  ricci_rnc = get_ricci_tensor(connection_rnc)
+
+  # Compute Ricci scalar in original coordinates.
+  # IMPORTANT: metric.components.value is NOT identity, so we must use g^{ab} R_ab
+  g_inv = jnp.linalg.inv(metric.components.value)
+  ricci_scalar_original = jnp.einsum("ab,ab->", g_inv, ricci.components.value)
+
+  # Compute Ricci scalar in RNC.
+  # In RNC at the origin, the metric is identity, so g^{ab} = δ^{ab} and R = trace(Ric)
+  ricci_scalar_rnc = jnp.trace(ricci_rnc.components.value)
+
+  # These should be equal - the Ricci scalar is coordinate-invariant!
+  assert jnp.allclose(ricci_scalar_original, ricci_scalar_rnc), (
+    f"Ricci scalar mismatch: original={ricci_scalar_original}, RNC={ricci_scalar_rnc}"
+  )
+
+  # Also verify that using the wrong formula (trace) in original coords gives wrong answer
+  wrong_ricci_scalar = jnp.trace(ricci.components.value)
+  assert not jnp.allclose(wrong_ricci_scalar, ricci_scalar_rnc), (
+    "trace(Ric) should NOT equal the Ricci scalar when metric is not identity"
+  )
+
+
+def test_change_coordinates_then_change_basis_recovers_original():
+  """
+  Test that change_coordinates + change_basis correctly composes to recover original components.
+
+  change_coordinates only changes the parameterization, NOT what the object represents.
+  So metric_back and metric represent the SAME geometric object, just in different bases.
+  Applying change_basis should recover the original components.
+  """
+  key = random.PRNGKey(0)
+  dim = 3
+  metric = create_random_metric(key, dim=dim)
+
+  # Get the Jacobians for x -> v (RNC) transformation
+  J_x_to_v, J_v_to_x = get_rnc_jacobians(metric)
+
+  # Transform metric to RNC: value goes from g to I
+  metric_rnc = to_riemann_normal_coordinates(metric)
+  assert jnp.allclose(metric_rnc.components.value, jnp.eye(dim))  # Sanity check
+
+  # Now use change_coordinates to go back from v to x
+  # This changes the basis description from v-coords to x-coords, but keeps values as I
+  metric_back = change_coordinates_tensor(metric_rnc, J_v_to_x)
+
+  # Values are still I (change_coordinates doesn't transform values)
+  assert jnp.allclose(metric_back.components.value, jnp.eye(dim))
+
+  # But metric_back and metric represent the SAME geometric object!
+  # They just have different bases. So change_basis should recover the original.
+  metric_recovered = change_basis(metric_back, metric.basis)
+
+  # This should recover the original metric components
+  assert jnp.allclose(metric_recovered.components.value, metric.components.value), \
+    "change_basis should recover original components"
+
+

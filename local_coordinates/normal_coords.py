@@ -154,6 +154,28 @@ def get_rnc_jacobians(metric: RiemannianMetric) -> Tuple[Jacobian, Jacobian]:
   return _compute_rnc_jacobians(metric)
 
 
+def _resolve_jacobian_pair(
+  metric: RiemannianMetric,
+  J_x_to_v: Optional[Jacobian],
+  J_v_to_x: Optional[Jacobian]
+) -> Tuple[Jacobian, Jacobian]:
+  """
+  Resolve a pair of Jacobians, computing missing ones as needed.
+
+  If neither is provided, computes standard RNC Jacobians.
+  If only one is provided, computes the other as its inverse.
+  If both are provided, returns them as-is.
+  """
+  if J_x_to_v is None and J_v_to_x is None:
+    return get_rnc_jacobians(metric)
+  elif J_x_to_v is None:
+    return get_inverse(J_v_to_x), J_v_to_x
+  elif J_v_to_x is None:
+    return J_x_to_v, get_inverse(J_x_to_v)
+  else:
+    return J_x_to_v, J_v_to_x
+
+
 def get_rnc_basis(
   metric: RiemannianMetric,
   J_v_to_x: Optional[Jacobian] = None
@@ -218,11 +240,7 @@ def to_riemann_normal_coordinates(
     J_x_to_v: Optional pre-computed inverse Jacobian (dv/dx).
     J_v_to_x: Optional pre-computed forward Jacobian (dx/dv).
   """
-  # Compute both jacobians if neither provided
-  if J_x_to_v is None or J_v_to_x is None:
-    J_x_to_v_computed, J_v_to_x_computed = get_rnc_jacobians(metric)
-    J_x_to_v = J_x_to_v if J_x_to_v is not None else J_x_to_v_computed
-    J_v_to_x = J_v_to_x if J_v_to_x is not None else J_v_to_x_computed
+  J_x_to_v, J_v_to_x = _resolve_jacobian_pair(metric, J_x_to_v, J_v_to_x)
 
   rnc_basis = get_rnc_basis(metric, J_v_to_x=J_v_to_x)
 
@@ -280,11 +298,7 @@ def to_riemann_normal_coordinates(
   """
   from local_coordinates.tangent import change_basis as change_basis_tangent
 
-  # Compute both jacobians if neither provided
-  if J_x_to_v is None or J_v_to_x is None:
-    J_x_to_v_computed, J_v_to_x_computed = get_rnc_jacobians(metric)
-    J_x_to_v = J_x_to_v if J_x_to_v is not None else J_x_to_v_computed
-    J_v_to_x = J_v_to_x if J_v_to_x is not None else J_v_to_x_computed
+  J_x_to_v, J_v_to_x = _resolve_jacobian_pair(metric, J_x_to_v, J_v_to_x)
 
   rnc_basis = get_rnc_basis(metric, J_v_to_x=J_v_to_x)
 
@@ -318,11 +332,7 @@ def to_riemann_normal_coordinates(
   """
   from local_coordinates.frame import change_basis as change_basis_frame
 
-  # Compute both jacobians if neither provided
-  if J_x_to_v is None or J_v_to_x is None:
-    J_x_to_v_computed, J_v_to_x_computed = get_rnc_jacobians(metric)
-    J_x_to_v = J_x_to_v if J_x_to_v is not None else J_x_to_v_computed
-    J_v_to_x = J_v_to_x if J_v_to_x is not None else J_v_to_x_computed
+  J_x_to_v, J_v_to_x = _resolve_jacobian_pair(metric, J_x_to_v, J_v_to_x)
 
   rnc_basis = get_rnc_basis(metric, J_v_to_x=J_v_to_x)
 
@@ -354,11 +364,7 @@ def to_riemann_normal_coordinates(
     J_x_to_v: Optional pre-computed inverse Jacobian (dv/dx).
     J_v_to_x: Optional pre-computed forward Jacobian (dx/dv).
   """
-  # Compute both jacobians if neither provided
-  if J_x_to_v is None or J_v_to_x is None:
-    J_x_to_v_computed, J_v_to_x_computed = get_rnc_jacobians(metric)
-    J_x_to_v = J_x_to_v if J_x_to_v is not None else J_x_to_v_computed
-    J_v_to_x = J_v_to_x if J_v_to_x is not None else J_v_to_x_computed
+  J_x_to_v, J_v_to_x = _resolve_jacobian_pair(metric, J_x_to_v, J_v_to_x)
 
   rnc_basis = get_rnc_basis(metric, J_v_to_x=J_v_to_x)
 
@@ -395,11 +401,7 @@ def to_riemann_normal_coordinates(
   """
   from local_coordinates.connection import change_basis as change_basis_connection
 
-  # Compute both jacobians if neither provided
-  if J_x_to_v is None or J_v_to_x is None:
-    J_x_to_v_computed, J_v_to_x_computed = get_rnc_jacobians(metric)
-    J_x_to_v = J_x_to_v if J_x_to_v is not None else J_x_to_v_computed
-    J_v_to_x = J_v_to_x if J_v_to_x is not None else J_v_to_x_computed
+  J_x_to_v, J_v_to_x = _resolve_jacobian_pair(metric, J_x_to_v, J_v_to_x)
 
   rnc_basis = get_rnc_basis(metric, J_v_to_x=J_v_to_x)
 
