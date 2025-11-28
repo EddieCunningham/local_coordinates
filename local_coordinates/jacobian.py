@@ -122,6 +122,80 @@ class Jacobian(AbstractBatchableObject):
     )
 
 
+def compose(J1: Jacobian, J2: Jacobian) -> Jacobian:
+  """
+  Compose two Jacobian objects using the chain rule.
+
+  If J1 represents the Jacobian of f1: z → y and J2 represents the Jacobian
+  of f2: x → z, then compose(J1, J2) returns the Jacobian of (f1 ∘ f2): x → y.
+
+  Index notation:
+    - J1.value[a, b] = ∂y^a / ∂z^b
+    - J2.value[b, i] = ∂z^b / ∂x^i
+    - result.value[a, i] = ∂y^a / ∂x^i = J1.value[a, b] * J2.value[b, i]
+
+  The chain rule formulas are:
+    ∂y/∂x = (∂y/∂z)(∂z/∂x)
+    ∂²y/∂x² = (∂²y/∂z²)(∂z/∂x)(∂z/∂x) + (∂y/∂z)(∂²z/∂x²)
+    ∂³y/∂x³ = (∂³y/∂z³)(∂z/∂x)³ + 3(∂²y/∂z²)(∂²z/∂x²)(∂z/∂x) + (∂y/∂z)(∂³z/∂x³)
+  """
+  A = J1.value      # ∂y/∂z, shape (a, b)
+  B = J1.gradient   # ∂²y/∂z², shape (a, b, c)
+  C = J1.hessian    # ∂³y/∂z³, shape (a, b, c, d)
+
+  P = J2.value      # ∂z/∂x, shape (b, i)
+  Q = J2.gradient   # ∂²z/∂x², shape (b, i, j)
+  R = J2.hessian    # ∂³z/∂x³, shape (b, i, j, k)
+
+  # First derivative: ∂y^a/∂x^i = A[a,b] P[b,i]
+  value = jnp.einsum("ab,bi->ai", A, P)
+
+  # Second derivative
+  if B is None and Q is None:
+    gradient = None
+  else:
+    # ∂²y^a/∂x^i∂x^j = B[a,b,c] P[b,i] P[c,j] + A[a,b] Q[b,i,j]
+    gradient = jnp.zeros((A.shape[0], P.shape[1], P.shape[1]))
+    if B is not None:
+      gradient = gradient + jnp.einsum("abc,bi,cj->aij", B, P, P)
+    if Q is not None:
+      gradient = gradient + jnp.einsum("ab,bij->aij", A, Q)
+
+  # Third derivative
+  if C is None and B is None and R is None:
+    hessian = None
+  elif gradient is None:
+    # If we don't have second derivatives, we can't compute third
+    hessian = None
+  else:
+    dim_out = A.shape[0]
+    dim_in = P.shape[1]
+    hessian = jnp.zeros((dim_out, dim_in, dim_in, dim_in))
+
+    # Term 1: C[a,b,c,d] P[b,i] P[c,j] P[d,k]
+    if C is not None:
+      hessian = hessian + jnp.einsum("abcd,bi,cj,dk->aijk", C, P, P, P)
+
+    # Terms 2-4: B terms with one Q and two P's
+    # ∂/∂x^k [B[a,b,c] P[b,i] P[c,j]] gives:
+    #   B[a,b,c] Q[b,i,k] P[c,j] + B[a,b,c] P[b,i] Q[c,j,k]
+    # ∂/∂x^k [A[a,b] Q[b,i,j]] gives:
+    #   B[a,b,c] P[c,k] Q[b,i,j] + A[a,b] R[b,i,j,k]
+    if B is not None and Q is not None:
+      # B[a,b,c] Q[b,i,k] P[c,j]
+      hessian = hessian + jnp.einsum("abc,bik,cj->aijk", B, Q, P)
+      # B[a,b,c] P[b,i] Q[c,j,k]
+      hessian = hessian + jnp.einsum("abc,bi,cjk->aijk", B, P, Q)
+      # B[a,b,c] P[c,k] Q[b,i,j]
+      hessian = hessian + jnp.einsum("abc,ck,bij->aijk", B, P, Q)
+
+    # Term 5: A[a,b] R[b,i,j,k]
+    if R is not None:
+      hessian = hessian + jnp.einsum("ab,bijk->aijk", A, R)
+
+  return Jacobian(value=value, gradient=gradient, hessian=hessian)
+
+
 def function_to_jacobian(f: Callable[[Array], Any], x: Array) -> Jacobian:
   # Build Jacobian of the coordinate change z(x) up to third order
   dzdx = jax.jacrev(f)(x)                       # (a, i)
