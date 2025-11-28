@@ -1,7 +1,7 @@
 import jax
 import jax.numpy as jnp
 import pytest
-from local_coordinates.jacobian import Jacobian, get_inverse
+from local_coordinates.jacobian import Jacobian
 from local_coordinates.jet import Jet, function_to_jet, change_coordinates
 from local_coordinates.jet import jet_decorator
 import jax.tree_util as jtu
@@ -965,7 +965,7 @@ def test_change_coordinates_with_inverse_jacobian_round_trip():
     jet_z = change_coordinates(jet_x, J_z)
 
     # Inverse Jacobian and change back
-    J_x = get_inverse(J_z)
+    J_x = J_z.get_inverse()
     jet_x_back = change_coordinates(jet_z, J_x)
 
     assert jnp.allclose(jet_x_back.value, jet_x.value, atol=1e-6, rtol=1e-6)

@@ -10,7 +10,7 @@ from local_coordinates.metric import RiemannianMetric
 from local_coordinates.tensor import Tensor, TensorType
 from local_coordinates.tangent import TangentVector, lie_bracket
 from local_coordinates.frame import Frame
-from local_coordinates.jacobian import function_to_jacobian, Jacobian, get_inverse
+from local_coordinates.jacobian import function_to_jacobian, Jacobian
 
 
 def create_random_basis(key: random.PRNGKey, dim: int) -> BasisVectors:
@@ -807,7 +807,7 @@ def test_connection_covariant_derivative_change_coordinates():
   nablaX_Y_q = connection_q.covariant_derivative(X_q, Y_q)
 
   # Transform result back and compare
-  jac_inv: Jacobian = get_inverse(jac)
+  jac_inv: Jacobian = jac.get_inverse()
   nablaX_Y_x_from_q = change_coordinates(nablaX_Y_q, jac_inv)
 
   assert jnp.allclose(nablaX_Y_x_from_q.components.value, nablaX_Y_x.components.value, atol=1e-5)

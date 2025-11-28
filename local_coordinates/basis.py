@@ -9,7 +9,7 @@ from linsdex import AbstractBatchableObject, auto_vmap
 from functools import partial
 from plum import dispatch
 from local_coordinates.jet import Jet, jet_decorator, change_coordinates as change_coordinates_jet
-from local_coordinates.jacobian import Jacobian, get_inverse
+from local_coordinates.jacobian import Jacobian
 import warnings
 
 class BasisVectors(AbstractBatchableObject):
@@ -142,7 +142,7 @@ def change_coordinates(
   """
   # Get forward Jacobian G and inverse Jacobian with its derivatives
   G = x_to_z_jacobian.value  # G[i,a] = dz^i/dx^a
-  J_inv = get_inverse(x_to_z_jacobian)
+  J_inv = x_to_z_jacobian.get_inverse()
   J = J_inv.value            # J[a,k] = dx^a/dz^k
   H = J_inv.gradient         # H[b,k,m] = d^2x^b/dz^k dz^m
   T = J_inv.hessian          # T[b,k,m,l] = d^3x^b/dz^k dz^m dz^l

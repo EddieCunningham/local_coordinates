@@ -14,7 +14,7 @@ from local_coordinates.metric import RiemannianMetric
 from local_coordinates.jet import get_identity_jet
 from local_coordinates.frame import Frame, get_lie_bracket_between_frame_pairs, basis_to_frame
 from local_coordinates.tangent import TangentVector
-from local_coordinates.jacobian import Jacobian, get_inverse
+from local_coordinates.jacobian import Jacobian
 
 class Connection(AbstractBatchableObject):
   """

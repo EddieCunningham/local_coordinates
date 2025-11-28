@@ -5,7 +5,7 @@ from local_coordinates.metric import RiemannianMetric, raise_index, lower_index
 from local_coordinates.tensor import change_basis, change_coordinates
 from local_coordinates.basis import BasisVectors, get_dual_basis_transform, get_standard_basis
 from local_coordinates.jet import Jet
-from local_coordinates.jacobian import function_to_jacobian, get_inverse
+from local_coordinates.jacobian import function_to_jacobian
 
 def test_riemannian_metric_creation():
   """
@@ -415,7 +415,7 @@ def test_metric_change_coordinates_gradient_chain_rule():
   metric_polar = change_coordinates(metric, jac)
 
   # Expected gradient via chain rule: dg/dz^k = J^a_k * dg/dx^a
-  J_inv = get_inverse(jac)
+  J_inv = jac.get_inverse()
   J = J_inv.value  # J[a,k] = dx^a/dz^k
   expected_gradient = jnp.einsum("ija,ak->ijk", gradient, J)
 

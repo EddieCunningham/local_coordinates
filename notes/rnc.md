@@ -22,24 +22,29 @@ With these expressions for the metric, we are able to the majority of the geomet
 
 In this post we will derive Riemann normal coordinates, including the expressions for the Jet coefficients of the metric, and Taylor expansions of geometric quantities we might care about in terms of these coordinates.  Around $p \in \mathcal{M}$, we will denote Riemann coordinates by $(v^1, \dots, v^n)$ and the corresponding coordinate frame by $(\frac{\partial}{\partial v^1}, \dots, \frac{\partial}{\partial v^n})$.  In this basis, we will see that the metric takes the form $g = \delta_{ij} dv^i \otimes dv^j$, and the Jet coefficients will be given by:
 $$
-\begin{align}
+\boxed{
+\begin{aligned}
   \frac{\partial g_{ij}}{\partial v^k} &= 0 \\
-  \frac{\partial^2 g_{ij}}{\partial v^k \partial v^l} &= \frac{1}{3}R_{kilj} + \frac{1}{3}R_{likj}
-\end{align}
+  \frac{\partial^2 g_{ij}}{\partial v^k \partial v^l} &= \frac{1}{3}R_{kilj} + \frac{1}{3}R_{likj} \\
+  \frac{\partial^2 \log \det(g)}{\partial v^i \partial v^j} &= -\frac{2}{3}(Rc)_{ij}
+\end{aligned}
+}
 $$
-where $R_{ijkl}$ are the components of the Riemann curvature tensor written in the normal coordinate basis.  We will also derive two important Taylor expansions of geometric quantities in terms of these coordinates.  We will compute the Taylor expansion of the metric around $p$, which is given by:
+where $R_{ijkl}$ are the components of the Riemann curvature tensor written in the normal coordinate basis and $Rc$ is the Ricci curvature tensor.
+
+Additionally, we can derive the Taylor expansions of the coordinate functions $x^i(v)$ in terms of the normal coordinate basis:
 $$
-\begin{align}
-  g_{ij}(v) = \delta_{ij} + \frac{1}{3}R_{kilj}(p)v^k v^l + O(|v|^3)
-\end{align}
+\boxed{
+\begin{aligned}
+  \frac{\partial x^i}{\partial v^j}
+  &= J^i_j \quad \text{(orthonormal frame components)}, \\
+  \frac{\partial^2 x^i}{\partial v^j \partial v^k}
+  &= -\bar{\Gamma}_{ab}^i J^a_j J^b_k, \\
+  \frac{\partial^3 x^i}{\partial v^a \partial v^b \partial v^c}
+  &= \text{Sym}_{abc}\left(-\frac{\partial \bar{\Gamma}^i_{jk}}{\partial x^m} J^m_a J^j_b J^k_c + 2\bar{\Gamma}^i_{jk} \bar{\Gamma}^j_{mn} J^m_a J^n_b J^k_c\right)
+\end{aligned}
+}
 $$
-where $g_{ij}$ are the components of the metric in the normal coordinate basis, and the Taylor expansion of the components of the volume form
-$$
-\begin{align}
-  \sqrt{\det(g_{ij}(v))} &= 1 - \frac{1}{6}\mathrm{Ric}_{kl}(p)v^k v^l + O(v^3)
-\end{align}
-$$
-where $\mathrm{Ric}_{kl}(p)$ are the components of the Ricci curvature tensor written in the normal coordinate basis.
 
 # Riemann normal coordinates
 Let $(M, g)$ be a Riemannian manifold and let $p \in M$ be a point.  Let $U \subset M$ be a normal neighborhood of $p$ and $(E_1, \dots, E_n)$ be an orthonormal frame on $U$.  For any $q \in U$, there exists $T \in T_p M$ such that $q = \exp_p(T)$ uniquely.  Since $T_p M$ is Euclidean space, we can construct a chart on $U$ that computes the components of $T$ given $q$:

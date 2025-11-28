@@ -23,7 +23,7 @@ from local_coordinates.tangent import change_coordinates as change_coordinates_t
 from local_coordinates.tensor import TensorType
 from local_coordinates.connection import Connection, get_levi_civita_connection
 from local_coordinates.connection import change_coordinates as change_coordinates_connection
-from local_coordinates.jacobian import Jacobian, get_inverse
+from local_coordinates.jacobian import Jacobian
 
 def _get_rnc_jacobian(gamma_bar: Jet, dxdv: Array) -> Jacobian:
   """
@@ -91,7 +91,7 @@ def _compute_rnc_jacobians(metric: RiemannianMetric) -> Tuple[Jacobian, Jacobian
   dxdv = jnp.einsum("ij,j->ij", eigenvectors, jax.lax.rsqrt(eigenvalues))
 
   J_v_to_x = _get_rnc_jacobian(gamma_bar, dxdv)
-  J_x_to_v = get_inverse(J_v_to_x)
+  J_x_to_v = J_v_to_x.get_inverse()
 
   return J_x_to_v, J_v_to_x
 
@@ -169,9 +169,9 @@ def _resolve_jacobian_pair(
   if J_x_to_v is None and J_v_to_x is None:
     return get_rnc_jacobians(metric)
   elif J_x_to_v is None:
-    return get_inverse(J_v_to_x), J_v_to_x
+    return J_v_to_x.get_inverse(), J_v_to_x
   elif J_v_to_x is None:
-    return J_x_to_v, get_inverse(J_x_to_v)
+    return J_x_to_v, J_x_to_v.get_inverse()
   else:
     return J_x_to_v, J_v_to_x
 

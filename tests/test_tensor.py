@@ -3,7 +3,7 @@ import pytest
 from local_coordinates.basis import BasisVectors, get_basis_transform, get_standard_basis
 from local_coordinates.tensor import Tensor, TensorType, change_basis, change_coordinates
 from local_coordinates.jet import Jet, function_to_jet
-from local_coordinates.jacobian import Jacobian, function_to_jacobian, get_inverse
+from local_coordinates.jacobian import Jacobian, function_to_jacobian
 import jax
 import jax.random as random
 
@@ -443,7 +443,7 @@ def test_change_coordinates_gradient_chain_rule():
 
   # Expected gradient via chain rule: dF/dz^i = J^a_i * dF/dx^a
   # where J^a_i = dx^a/dz^i (inverse Jacobian)
-  J_inv = get_inverse(jac)
+  J_inv = jac.get_inverse()
   J = J_inv.value  # J[a,i] = dx^a/dz^i
   expected_gradient = jnp.einsum("a,ai->i", gradient, J)
 

@@ -21,7 +21,7 @@ from local_coordinates.jet import Jet, jet_decorator, get_identity_jet, change_c
 from local_coordinates.tangent import TangentVector, lie_bracket
 from local_coordinates.frame import Frame, basis_to_frame
 from local_coordinates.connection import Connection
-from local_coordinates.jacobian import Jacobian, get_inverse
+from local_coordinates.jacobian import Jacobian
 from jaxtyping import Array, Scalar
 from typing import Annotated, Callable
 import equinox as eqx
@@ -378,7 +378,7 @@ def test_sphere_rnc_jacobian():
   sphere = get_sphere_metric(p)
 
   J_x_to_v = get_transformation_to_riemann_normal_coordinates(sphere)
-  J_v_to_x = get_inverse(J_x_to_v)
+  J_v_to_x = J_x_to_v.get_inverse()
 
   # dv/dx = 2I (the normalization factor sqrt(4) = 2)
   expected_dvdx = 2.0 * jnp.eye(2)
@@ -581,7 +581,7 @@ def test_sphere_d3xdv3_riemann_term_coefficient():
   sphere = get_sphere_metric(p)
 
   J_x_to_v = get_transformation_to_riemann_normal_coordinates(sphere)
-  J_v_to_x = get_inverse(J_x_to_v)
+  J_v_to_x = J_x_to_v.get_inverse()
 
   # d³x/dv³ is stored in J_v_to_x.hessian
   d3xdv3 = J_v_to_x.hessian
@@ -647,7 +647,7 @@ def test_jacobian_inverse_consistency_value():
   sphere = get_sphere_metric(p)
 
   J_x_to_v = get_transformation_to_riemann_normal_coordinates(sphere)
-  J_v_to_x = get_inverse(J_x_to_v)
+  J_v_to_x = J_x_to_v.get_inverse()
 
   product = J_x_to_v.value @ J_v_to_x.value
   assert jnp.allclose(product, jnp.eye(2), atol=1e-10)
@@ -670,7 +670,7 @@ def test_jacobian_inverse_consistency_gradient():
   metric = create_random_metric(key, dim=dim)
 
   J_x_to_v = get_transformation_to_riemann_normal_coordinates(metric)
-  J_v_to_x = get_inverse(J_x_to_v)
+  J_v_to_x = J_x_to_v.get_inverse()
 
   dvdx = J_x_to_v.value
   dxdv = J_v_to_x.value
@@ -695,7 +695,7 @@ def test_sphere_d2xdv2_vanishes():
   sphere = get_sphere_metric(p)
 
   J_x_to_v = get_transformation_to_riemann_normal_coordinates(sphere)
-  J_v_to_x = get_inverse(J_x_to_v)
+  J_v_to_x = J_x_to_v.get_inverse()
 
   # d²x/dv² should be zero for the sphere at origin
   assert jnp.allclose(J_v_to_x.gradient, 0.0, atol=1e-10)
@@ -714,7 +714,7 @@ def test_d3xdv3_symmetry():
   metric = create_random_metric(key, dim=dim)
 
   J_x_to_v = get_transformation_to_riemann_normal_coordinates(metric)
-  J_v_to_x = get_inverse(J_x_to_v)
+  J_v_to_x = J_x_to_v.get_inverse()
 
   d3xdv3 = J_v_to_x.hessian  # shape (i, j, k, l)
 
@@ -902,7 +902,7 @@ def test_rn_basis_terms_vanish():
   metric = create_random_metric(key, dim=dim)
 
   J_x_to_v = get_transformation_to_riemann_normal_coordinates(metric)
-  J_v_to_x = get_inverse(J_x_to_v)
+  J_v_to_x = J_x_to_v.get_inverse()
 
   jacobian_as_jet = Jet(
     value=J_v_to_x.value,

@@ -12,7 +12,7 @@ from local_coordinates.frame import get_lie_bracket_between_frame_pairs, basis_t
 from local_coordinates.jet import Jet, jet_decorator, get_identity_jet
 from local_coordinates.tensor import TensorType, change_basis, change_coordinates
 from local_coordinates.tangent import TangentVector, lie_bracket
-from local_coordinates.jacobian import function_to_jacobian, get_inverse
+from local_coordinates.jacobian import function_to_jacobian
 from jaxtyping import Array
 from typing import Annotated
 
@@ -471,7 +471,7 @@ def test_riemann_change_coordinates_gradient_chain_rule():
   riemann_polar = change_coordinates(riemann, jac)
 
   # Expected gradient via chain rule: dR/dz^k = J^a_k * dR/dx^a
-  J_inv = get_inverse(jac)
+  J_inv = jac.get_inverse()
   J = J_inv.value  # J[a,k] = dx^a/dz^k
   expected_gradient = jnp.einsum("ijkla,am->ijklm", gradient, J)
 

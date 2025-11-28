@@ -2,7 +2,7 @@ import jax
 import jax.numpy as jnp
 import pytest
 
-from local_coordinates.jacobian import Jacobian, get_inverse
+from local_coordinates.jacobian import Jacobian
 
 
 def test_jacobian_basic_construction():
@@ -38,7 +38,7 @@ def test_jacobian_get_inverse_linear_only():
                  [0.1, -0.2, 1.2]])
   J = Jacobian(value=A, gradient=None, hessian=None)
 
-  J_inv = get_inverse(J)
+  J_inv = J.get_inverse()
 
   assert jnp.allclose(J_inv.value @ J.value, jnp.eye(dim), atol=1e-6, rtol=1e-6)
   assert jnp.allclose(J.value @ J_inv.value, jnp.eye(dim), atol=1e-6, rtol=1e-6)
@@ -65,7 +65,7 @@ def test_jacobian_get_inverse_hessian_1d():
   d3zdx3 = jax.jacfwd(jax.jacfwd(jax.jacrev(F)))(x0)  # shape (1,1,1,1)
 
   J = Jacobian(value=dzdx, gradient=d2zdx2, hessian=d3zdx3)
-  J_inv = get_inverse(J)
+  J_inv = J.get_inverse()
 
   A = float(dzdx[0, 0])
   B = float(d2zdx2[0, 0, 0])
@@ -114,10 +114,10 @@ def test_jacobian_inverse_round_trip():
   J = Jacobian(value=A, gradient=B, hessian=C_sym)
 
   # First inverse: J_inv
-  J_inv = get_inverse(J)
+  J_inv = J.get_inverse()
 
   # Second inverse: J_inv_inv should match J
-  J_inv_inv = get_inverse(J_inv)
+  J_inv_inv = J_inv.get_inverse()
 
   # Check closeness
   # Tolerances need to be a bit looser due to accumulated precision errors in inversions and einsums
