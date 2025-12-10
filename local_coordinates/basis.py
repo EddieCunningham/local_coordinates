@@ -148,9 +148,10 @@ def change_coordinates(
   T = J_inv.hessian          # T[b,k,m,l] = d^3x^b/dz^k dz^m dz^l
 
   # Original basis components and derivatives
-  E = basis.components.value           # E[j,a]
-  dE = basis.components.gradient       # dE[j,a,b] = dE^a_j/dx^b
-  d2E = basis.components.hessian       # d2E[j,a,b,c] = d^2E^a_j/dx^b dx^c
+  # Convention: E[a,j] = E_j^a = a-th component of j-th basis vector (columns are vectors)
+  E = basis.components.value           # E[a,j] = E_j^a
+  dE = basis.components.gradient       # dE[a,j,b] = dE_j^a/dx^b
+  d2E = basis.components.hessian       # d2E[a,j,b,c] = d^2E_j^a/dx^b dx^c
 
   # Value: E_new_j^i = E_j^a G_a^i = (G @ E)[i,j]
   # With convention E[a,j] = E_j^a (column j = basis vector j)
