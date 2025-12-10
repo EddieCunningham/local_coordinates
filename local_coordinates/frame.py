@@ -19,9 +19,19 @@ class Frame(AbstractBatchableObject):
   """
   A set of basis vectors for a tangent space. The basis vectors are always written
   in the standard basis of Euclidean coordinates.
+
+  Indexing Convention:
+    Following Jet conventions, derivative indices are trailing. For a coordinate frame
+    with Jacobian J^i_j = ∂x^i/∂z^j:
+
+      - components.value[i, j] = J^i_j = i-th component of j-th basis vector
+      - components.gradient[i, j, k] = ∂J^i_j/∂z^k = ∂²x^i/∂z^j∂z^k
+      - components.hessian[i, j, k, l] = ∂³x^i/∂z^j∂z^k∂z^l
+
+    Columns are basis vectors: components.value[:, j] = E_j (the j-th basis vector)
   """
   p: Float[Array, "N"]
-  components: Annotated[Jet, "N D"] # Contains a matrix of Jets, each of which represents a single component
+  components: Annotated[Jet, "N D"] # Contains a matrix of Jets, columns are basis vectors
   basis: BasisVectors
 
   def __check_init__(self):
@@ -34,11 +44,21 @@ class Frame(AbstractBatchableObject):
   def batch_size(self) -> Union[None,int,Tuple[int]]:
     return self.basis.batch_size
 
-  def get_basis_vector(self, i: int) -> TangentVector:
+  def get_basis_vector(self, j: int) -> TangentVector:
     """
-    Get the i-th basis vector.
+    Get the j-th basis vector.
+
+    Since columns are basis vectors, we extract the j-th column:
+      - value[:, j] = E_j (j-th basis vector)
+      - gradient[:, j, :] = ∂E_j/∂x
+      - hessian[:, j, :, :] = ∂²E_j/∂x²
     """
-    return TangentVector(p=self.p, components=self.components[i], basis=self.basis)
+    value = self.components.value[:, j]
+    gradient = self.components.gradient[:, j, :] if self.components.gradient is not None else None
+    hessian = self.components.hessian[:, j, :, :] if self.components.hessian is not None else None
+    dim = self.p.shape[0]
+    components_jet = Jet(value=value, gradient=gradient, hessian=hessian, dim=dim)
+    return TangentVector(p=self.p, components=components_jet, basis=self.basis)
 
   def to_standard_basis(self) -> 'Frame':
     """
@@ -56,12 +76,17 @@ def basis_to_frame(basis: BasisVectors) -> Frame:
 def change_basis(frame: Frame, new_basis: BasisVectors) -> Frame:
   """
   Transform a frame from one basis to another.
+
+  Since columns are basis vectors, we vmap over axis 1 (columns) and stack on axis 1.
   """
   # Compute linear transform from the current basis to the new basis.
   T: Jet = get_basis_transform(frame.basis, new_basis)
 
-  # Apply the contravariant transform to each of the frame components
-  new_components: Jet = eqx.filter_vmap(apply_contravariant_transform, in_axes=(None, 0))(T, frame.components)
+  # Apply the contravariant transform to each column (basis vector)
+  # in_axes=1 extracts columns, out_axes=1 stacks them back as columns
+  new_components: Jet = eqx.filter_vmap(
+    apply_contravariant_transform, in_axes=(None, 1), out_axes=1
+  )(T, frame.components)
 
   return Frame(p=frame.p, components=new_components, basis=new_basis)
 
@@ -95,10 +120,12 @@ def get_lie_bracket_between_frame_pairs(frame: Frame) -> Annotated[TangentVector
   """
   Returns a doubly batched TangentVector whose elements are a TangentVector
   representing the Lie bracket between the i-th and j-th basis vectors.
+
+  Since columns are basis vectors, we vmap over axis 1 (columns).
   """
 
-  @partial(eqx.filter_vmap, in_axes=(0, None))
-  @partial(eqx.filter_vmap, in_axes=(None, 0))
+  @partial(eqx.filter_vmap, in_axes=(1, None))  # outer: iterate i over columns
+  @partial(eqx.filter_vmap, in_axes=(None, 1))  # inner: iterate j over columns
   def get_lie_bracket(Ei_components: Jet, Ej_components: Jet) -> Jet:
     Ei = TangentVector(p=frame.p, components=Ei_components, basis=frame.basis)
     Ej = TangentVector(p=frame.p, components=Ej_components, basis=frame.basis)
