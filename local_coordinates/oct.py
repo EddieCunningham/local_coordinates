@@ -318,13 +318,13 @@ class LocalOCT(AbstractBatchableObject):
 
 
 
-  def _check_symmetries(self, atol: float = 1e-5, rtol: float = 1e-5):
+  def _check_symmetries(self, atol: float = 1e-5, rtol: float = 1e-5, check_beta_symmetry: bool = True):
     """
     Check that attributes of this object have the symmetries that we expect.
 
     This verifies the constraints derived from the flatness conditions:
     1. U must be orthonormal: U^T U = I (columns are orthonormal)
-    2. beta must be symmetric: beta = beta^T
+    2. beta must be symmetric: beta = beta^T (optional, can be skipped for exploration)
     3. First Lamé equation (for k != i != j):
        U_k(beta_ij) = beta_ik * beta_kj - beta_ij * beta_kj
     4. Second Lamé equation (for i != j):
@@ -333,6 +333,8 @@ class LocalOCT(AbstractBatchableObject):
     Args:
       atol: Absolute tolerance for numerical comparisons.
       rtol: Relative tolerance for numerical comparisons.
+      check_beta_symmetry: If True, verify beta is symmetric. Set to False to explore
+                           non-symmetric beta configurations (which violate integrability).
 
     Raises:
       AssertionError: If any of the symmetry constraints are violated.
@@ -344,9 +346,10 @@ class LocalOCT(AbstractBatchableObject):
     assert jnp.allclose(UTU, jnp.eye(n), atol=atol, rtol=rtol), \
         f"U is not orthonormal: U^T U = {UTU}"
 
-    # 2) beta must be symmetric: beta = beta^T
-    assert jnp.allclose(self.beta, self.beta.T, atol=atol, rtol=rtol), \
-        f"beta is not symmetric: beta = {self.beta}, beta^T = {self.beta.T}"
+    # 2) beta must be symmetric: beta = beta^T (optional check)
+    if check_beta_symmetry:
+      assert jnp.allclose(self.beta, self.beta.T, atol=atol, rtol=rtol), \
+          f"beta is not symmetric: beta = {self.beta}, beta^T = {self.beta.T}"
 
     # 3) First Lamé equation: For k != i != j (all three distinct):
     #    dbeta[i,j,k] = beta[i,k] * beta[k,j] - beta[i,j] * beta[k,j]
@@ -630,6 +633,7 @@ def plot_oct_grid(
     savepath: Optional[str] = None,
     title: Optional[str] = None,
     show: bool = True,
+    draw_grid: bool = True,
     draw_basis_vectors: bool = True,
     basis_vector_scale: float = 0.15,
     figsize: Tuple[float, float] = (8, 8),
@@ -654,6 +658,7 @@ def plot_oct_grid(
     savepath: If provided, save the figure to this path.
     title: Optional title for the plot.
     show: Whether to display the plot.
+    draw_grid: Whether to draw the coordinate grid lines.
     draw_basis_vectors: Whether to draw the basis vectors at the origin.
     basis_vector_scale: Scale factor for the basis vector arrows.
     figsize: Figure size as (width, height).
@@ -709,15 +714,17 @@ def plot_oct_grid(
   if ax is None:
     fig, ax = plt.subplots(figsize=figsize)
 
-  # Plot coordinate lines - first family (varying first coordinate)
-  for v in uvs:
-    xs, ys = eval_line(True, float(v))
-    ax.plot(xs, ys, color=line_color_1, linewidth=linewidth, alpha=alpha)
+  # Plot coordinate lines (if enabled)
+  if draw_grid:
+    # Plot coordinate lines - first family (varying first coordinate)
+    for v in uvs:
+      xs, ys = eval_line(True, float(v))
+      ax.plot(xs, ys, color=line_color_1, linewidth=linewidth, alpha=alpha)
 
-  # Plot coordinate lines - second family (varying second coordinate)
-  for u in uvs:
-    xs, ys = eval_line(False, float(u))
-    ax.plot(xs, ys, color=line_color_2, linewidth=linewidth, alpha=alpha)
+    # Plot coordinate lines - second family (varying second coordinate)
+    for u in uvs:
+      xs, ys = eval_line(False, float(u))
+      ax.plot(xs, ys, color=line_color_2, linewidth=linewidth, alpha=alpha)
 
   # Mark the basepoint
   x0, y0 = float(oct.p[0]), float(oct.p[1]) if dim > 1 else 0.0
@@ -747,11 +754,12 @@ def plot_oct_grid(
   # Clean up the plot - minimal style with labels
   ax.set_aspect('equal', 'box')
 
-  # Remove ticks but keep axis labels
-  ax.set_xticks([])
-  ax.set_yticks([])
+  # Set fixed axis limits based on span (with some padding)
+  limit = span * 1.5
+  ax.set_xlim(-limit, limit)
+  ax.set_ylim(-limit, limit)
 
-  # Show only bottom and left spines (axis lines), no ticks
+  # Show only bottom and left spines (axis lines)
   ax.spines['top'].set_visible(False)
   ax.spines['right'].set_visible(False)
   ax.spines['bottom'].set_visible(True)
@@ -761,9 +769,9 @@ def plot_oct_grid(
   ax.spines['bottom'].set_linewidth(0.8)
   ax.spines['left'].set_linewidth(0.8)
 
-  # Add axis labels
-  ax.set_xlabel(r'$z_1$', fontsize=12, labelpad=5)
-  ax.set_ylabel(r'$z_2$', fontsize=12, labelpad=5)
+  # Add axis labels (using plain text to avoid mathtext parsing issues)
+  ax.set_xlabel('z1', fontsize=12, labelpad=5)
+  ax.set_ylabel('z2', fontsize=12, labelpad=5)
 
   # Add title if provided
   if title is not None:
