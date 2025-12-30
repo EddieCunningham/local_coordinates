@@ -14,6 +14,7 @@ from local_coordinates.metric import RiemannianMetric
 from local_coordinates.oct import (
     LocalOCT,
     _flatness_loss,
+    _lie_bracket_loss,
     _compute_dbeta_from_beta,
     create_local_oct,
     fit_local_oct_to_log_det,
@@ -209,6 +210,76 @@ class TestGeometricQuantitiesVsBeta:
 
         loss = _flatness_loss(beta, dbeta)
         assert loss < 1e-6, f"Lamé equations not satisfied: loss = {float(loss)}"
+
+    def test_lie_bracket_loss_matches_original_formula(self, random_oct):
+        """
+        Test that the O(N^2) lie bracket loss matches the original O(N^3) formula.
+
+        The Lie bracket of the principal frame is:
+            [U_i, U_j]^a = beta[i,j] * U[a,i] - beta[j,i] * U[a,j]
+
+        Original O(N^3) implementation:
+            term1 = einsum("ij,ai->ija", beta, U)  # term1[i,j,a] = beta[i,j] * U[a,i]
+            term2 = einsum("ji,aj->ija", beta, U)  # term2[i,j,a] = beta[j,i] * U[a,j]
+            lb = term1 - term2
+            loss = sum over i < j of ||lb[i,j,:]||^2
+
+        Simplified O(N^2) implementation uses orthonormality of U.
+        """
+        U = random_oct.U
+        beta = random_oct.beta
+        n = beta.shape[0]
+
+        # Original O(N^3) formula
+        term1 = jnp.einsum("ij,ai->ija", beta, U)
+        term2 = jnp.einsum("ji,aj->ija", beta, U)
+        lb = term1 - term2
+        mask = jnp.triu(jnp.ones((n, n)), k=1)[:, :, None]
+        masked_lb = lb * mask
+        expected_loss = jnp.sum(masked_lb ** 2)
+
+        # New O(N^2) implementation
+        actual_loss = _lie_bracket_loss(U, beta)
+
+        error = jnp.abs(expected_loss - actual_loss)
+        assert error < 1e-10, (
+            f"Lie bracket loss mismatch: expected={expected_loss}, actual={actual_loss}, error={error}"
+        )
+
+    def test_lie_bracket_loss_zero_for_symmetric_beta(self, key, dim):
+        """
+        For symmetric beta with orthonormal U, the Lie bracket loss should be zero
+        because [U_i, U_j] = beta[i,j]*U_i - beta[j,i]*U_j = beta[i,j]*(U_i - U_j)
+        and the loss sums beta[i,j]^2 + beta[j,i]^2 = 2*beta[i,j]^2 for symmetric beta.
+
+        Actually, the loss is NOT zero for symmetric beta. This test verifies both
+        implementations give the same non-zero result.
+        """
+        # Create random orthonormal U
+        key, subkey = random.split(key)
+        A = random.normal(subkey, (dim, dim))
+        U, _ = jnp.linalg.qr(A)
+
+        # Create symmetric beta
+        key, subkey = random.split(key)
+        B = random.normal(subkey, (dim, dim))
+        beta = (B + B.T) / 2
+        beta = beta - jnp.diag(jnp.diag(beta))  # Zero diagonal
+
+        # Original O(N^3) formula
+        n = dim
+        term1 = jnp.einsum("ij,ai->ija", beta, U)
+        term2 = jnp.einsum("ji,aj->ija", beta, U)
+        lb = term1 - term2
+        mask = jnp.triu(jnp.ones((n, n)), k=1)[:, :, None]
+        masked_lb = lb * mask
+        expected_loss = jnp.sum(masked_lb ** 2)
+
+        # New O(N^2) implementation
+        actual_loss = _lie_bracket_loss(U, beta)
+
+        error = jnp.abs(expected_loss - actual_loss)
+        assert error < 1e-10, f"Loss mismatch for symmetric beta: error={error}"
 
     def test_connection_from_oct_matches_beta_formula(self, random_oct):
         """

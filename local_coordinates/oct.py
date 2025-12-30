@@ -402,16 +402,20 @@ class LocalOCT(AbstractBatchableObject):
 def _lie_bracket_loss(U: Float[Array, "N N"], beta: Float[Array, "N N"]) -> Float[Array, ""]:
   """
   Compute the loss measuring violation of the Lie bracket equation.
+
+  The Lie bracket of the principal frame is:
+    [U_i, U_j]^a = beta[i,j] * U[a,i] - beta[j,i] * U[a,j]
+
+  For orthonormal U, this simplifies because:
+    ||[U_i, U_j]||^2 = beta[i,j]^2 * ||U_i||^2 - 2*beta[i,j]*beta[j,i]*<U_i,U_j> + beta[j,i]^2 * ||U_j||^2
+                     = beta[i,j]^2 + beta[j,i]^2  (since ||U_i|| = 1 and <U_i,U_j> = 0)
+
+  Summing over i < j gives the sum of all off-diagonal beta^2 elements.
+  This uses O(N^2) memory instead of O(N^3).
   """
   n = beta.shape[0]
-
-  term1 = jnp.einsum("ij,ai->ija", beta, U)
-  term2 = jnp.einsum("ji,aj->ija", beta, U)
-  lb = term1 - term2
-
-  mask = jnp.triu(jnp.ones((n, n)), k=1)[:,:,None]
-  masked_lb = lb*mask
-  return jnp.sum(masked_lb**2)
+  off_diag_mask = 1.0 - jnp.eye(n)
+  return jnp.sum(beta ** 2 * off_diag_mask)
 
 def _flatness_loss(beta: Float[Array, "N N"], dbeta: Float[Array, "N N N"]) -> Float[Array, ""]:
   """
