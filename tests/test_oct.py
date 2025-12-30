@@ -16,11 +16,13 @@ from local_coordinates.oct import (
     _flatness_loss,
     _compute_dbeta_from_beta,
     create_local_oct,
+    fit_local_oct_to_log_det,
+    plot_oct_with_density,
 )
 from local_coordinates.basis import BasisVectors, change_basis, get_standard_basis, change_coordinates
 from local_coordinates.frame import Frame, basis_to_frame
 from local_coordinates.frame import get_lie_bracket_between_frame_pairs
-from local_coordinates.jet import Jet, get_identity_jet
+from local_coordinates.jet import Jet, get_identity_jet, function_to_jet
 from local_coordinates.jet import jet_decorator
 from local_coordinates.jacobian import Jacobian
 from local_coordinates.tangent import TangentVector
@@ -966,3 +968,379 @@ class TestAdditionalThesisFormulas:
                 assert max_error < 1e-5, \
                     f"Covariant derivative failed for (i,j)=({i},{j}): " \
                     f"max error = {max_error}"
+
+
+# =============================================================================
+# Test Fitting Functions
+# =============================================================================
+
+def _get_log_det_jet_in_x_coords(oct: LocalOCT) -> Jet:
+    """
+    Compute log|det J| jet in x-coordinates using autodiff.
+
+    The fit_local_oct_to_log_det function expects log_det_jet in x-coordinates,
+    not U-frame coordinates as returned by get_log_det_jet().
+    """
+    jacobian = oct.get_jacobian()
+    J_jet = Jet(
+        value=jacobian.value,
+        gradient=jacobian.gradient,
+        hessian=jacobian.hessian,
+        dim=oct.p.shape[0]
+    )
+
+    @jet_decorator
+    def compute_log_det(J_val):
+        sign, logdet = jnp.linalg.slogdet(J_val)
+        return logdet
+
+    return compute_log_det(J_jet)
+
+
+class TestFitLocalOCT:
+    """Tests for fitting LocalOCT to target log-det jets."""
+
+    def test_fit_local_oct_to_log_det_recovers_original(self, key):
+        """
+        Fitting a perturbed LocalOCT to its original log_det_jet should
+        approximately recover the original parameters.
+        """
+        dim = 2
+        p = jnp.zeros(dim)
+        original_oct = create_local_oct(p, key)
+
+        # Get the target log_det_jet in x-coordinates
+        target_log_det_jet = _get_log_det_jet_in_x_coords(original_oct)
+
+        # Create a perturbed initial guess
+        key, subkey = random.split(key)
+        perturbed_oct = create_local_oct(p, subkey)
+
+        # Fit the perturbed OCT to the target
+        fitted_oct = fit_local_oct_to_log_det(
+            perturbed_oct,
+            target_log_det_jet,
+            max_steps=500,
+        )
+
+        # Check that the fitted log_det_jet matches the target
+        fitted_log_det_jet = _get_log_det_jet_in_x_coords(fitted_oct)
+
+        # Note: This is a non-convex problem, so we check for reasonable improvement
+        # rather than exact recovery. The key tests are orthonormality and loss reduction.
+        value_error = jnp.abs(fitted_log_det_jet.value - target_log_det_jet.value)
+        assert value_error < 2.0, f"Log det value mismatch: error = {value_error}"
+
+        grad_error = jnp.max(jnp.abs(fitted_log_det_jet.gradient - target_log_det_jet.gradient))
+        assert grad_error < 1.0, f"Log det gradient mismatch: error = {grad_error}"
+
+    def test_fit_local_oct_preserves_orthonormality(self, key):
+        """
+        The fitted LocalOCT should have an approximately orthonormal U.
+        """
+        dim = 2
+        p = jnp.zeros(dim)
+        original_oct = create_local_oct(p, key)
+        target_log_det_jet = _get_log_det_jet_in_x_coords(original_oct)
+
+        key, subkey = random.split(key)
+        perturbed_oct = create_local_oct(p, subkey)
+
+        fitted_oct = fit_local_oct_to_log_det(
+            perturbed_oct,
+            target_log_det_jet,
+            max_steps=500,
+        )
+
+        # Check orthonormality of U
+        UTU = fitted_oct.U.T @ fitted_oct.U
+        orthonormality_error = jnp.max(jnp.abs(UTU - jnp.eye(dim)))
+        assert orthonormality_error < 1e-2, f"U not orthonormal: error = {orthonormality_error}"
+
+    def test_fit_local_oct_reduces_loss(self, key):
+        """
+        Fitting should reduce the overall loss compared to the initial guess.
+        """
+        dim = 2
+        p = jnp.zeros(dim)
+        original_oct = create_local_oct(p, key)
+        target_log_det_jet = _get_log_det_jet_in_x_coords(original_oct)
+
+        key, subkey = random.split(key)
+        perturbed_oct = create_local_oct(p, subkey)
+
+        # Compute initial loss (value and gradient in x-coords)
+        def compute_loss(oct, target):
+            log_det_jet = _get_log_det_jet_in_x_coords(oct)
+            value_loss = (log_det_jet.value - target.value)**2
+            grad_loss = jnp.sum((log_det_jet.gradient - target.gradient)**2)
+            return value_loss + grad_loss
+
+        initial_loss = compute_loss(perturbed_oct, target_log_det_jet)
+
+        fitted_oct = fit_local_oct_to_log_det(
+            perturbed_oct,
+            target_log_det_jet,
+            max_steps=500,
+        )
+
+        final_loss = compute_loss(fitted_oct, target_log_det_jet)
+
+        assert final_loss < initial_loss, \
+            f"Fitting did not reduce loss: initial={initial_loss}, final={final_loss}"
+
+    def test_fit_local_oct_to_gaussian_log_prob(self, key):
+        """
+        Fit LocalOCT to the log probability of a full-rank Gaussian.
+
+        For N(μ, Σ):
+          log p(x) = const - 0.5 * (x-μ)^T Σ^{-1} (x-μ)
+          ∇ log p(x) = -Σ^{-1}(x - μ)  (score function)
+          ∇² log p(x) = -Σ^{-1}
+        """
+        dim = 2
+        p = jnp.zeros(dim)
+
+        # Create a random full-rank covariance matrix
+        key, subkey = random.split(key)
+        A = random.normal(subkey, (dim, dim))
+        Sigma = A @ A.T + 0.1 * jnp.eye(dim)  # Ensure positive definite
+
+        # Mean at origin for simplicity
+        mu = jnp.zeros(dim)
+
+        # Define log probability function for N(μ, Σ)
+        def log_prob(x):
+            Sigma_inv = jnp.linalg.inv(Sigma)
+            diff = x - mu
+            return -0.5 * diff @ Sigma_inv @ diff - 0.5 * jnp.linalg.slogdet(Sigma)[1] - 0.5 * dim * jnp.log(2 * jnp.pi)
+
+        # Use function_to_jet to compute value, gradient, and hessian
+        target_log_det_jet = function_to_jet(log_prob, p)
+
+        # Create initial OCT guess
+        key, subkey = random.split(key)
+        initial_oct = create_local_oct(p, subkey)
+
+        # Fit to the Gaussian log prob
+        fitted_oct = fit_local_oct_to_log_det(
+            initial_oct,
+            target_log_det_jet,
+            max_steps=500,
+        )
+
+        # Check that U remains orthonormal
+        UTU = fitted_oct.U.T @ fitted_oct.U
+        orthonormality_error = jnp.max(jnp.abs(UTU - jnp.eye(dim)))
+        assert orthonormality_error < 0.1, f"U not orthonormal: error = {orthonormality_error}"
+
+        # Check that fitted log_det_jet approximately matches target
+        fitted_log_det_jet = fitted_oct.get_log_det_jet()
+
+        # Transform fitted gradient to x-coords for comparison
+        # fitted gradient is in U-frame, target is in x-coords
+        fitted_grad_x = fitted_oct.U @ fitted_log_det_jet.gradient
+
+        grad_error = jnp.max(jnp.abs(fitted_grad_x - target_log_det_jet.gradient))
+        assert grad_error < 1.0, f"Gradient mismatch: error = {grad_error}"
+
+    def test_plot_oct_with_gaussian_density(self, key):
+        """
+        Test plotting OCT coordinate curves overlaid on a Gaussian density heatmap.
+        """
+        import matplotlib.pyplot as plt
+        dim = 2
+        p = jnp.zeros(dim)
+
+        # Create a random full-rank covariance matrix
+        key, subkey = random.split(key)
+        A = random.normal(subkey, (dim, dim))
+        Sigma = A @ A.T + 0.1 * jnp.eye(dim)
+
+        mu = jnp.zeros(dim)
+
+        def log_prob(x):
+            Sigma_inv = jnp.linalg.inv(Sigma)
+            diff = x - mu
+            return -0.5 * diff @ Sigma_inv @ diff - 0.5 * jnp.linalg.slogdet(Sigma)[1] - 0.5 * dim * jnp.log(2 * jnp.pi)
+
+        # Create and fit OCT
+        target_log_det_jet = function_to_jet(log_prob, p)
+
+        key, subkey = random.split(key)
+        initial_oct = create_local_oct(p, subkey)
+
+        fitted_oct = fit_local_oct_to_log_det(
+            initial_oct,
+            target_log_det_jet,
+            max_steps=500,
+            verbose=True,
+        )
+
+        # Test that plotting works without errors
+        fig, ax = plot_oct_with_density(
+            fitted_oct,
+            log_prob,
+            span=0.5,
+            show=False,
+            title="Fitted OCT on Gaussian Density",
+        )
+
+        assert fig is not None
+        assert ax is not None
+
+        plt.close(fig)
+
+    def test_fit_oct_to_neals_funnel(self, key):
+        """
+        Test fitting OCT to a 2D Neal's Funnel distribution at multiple points.
+
+        Neal's Funnel:
+          x1 ~ N(0, sigma1)
+          x2 ~ N(0, exp(x1/2))
+        """
+        pytest.importorskip("studies.toy_pdf.energy", reason="studies module not in path")
+        import matplotlib.pyplot as plt
+        from studies.toy_pdf.energy import NealsFunnel
+
+        dim = 2
+
+        # Define 5 different evaluation points
+        points = [
+            jnp.array([-3.0, 0.0]),
+            jnp.array([-1.5, 0.3]),
+            jnp.array([0.0, 0.0]),
+            jnp.array([1.5, 0.5]),
+            jnp.array([3.0, 1.0]),
+        ]
+
+        # Create Neal's Funnel distribution
+        funnel = NealsFunnel(input_shape=(dim,), sigma1=3.0)
+
+        def log_prob(x):
+            return funnel.log_prob(x)
+
+        # Train OCTs at each point and collect histories
+        fitted_octs = []
+        histories = []
+        for p in points:
+            target_log_det_jet = function_to_jet(log_prob, p)
+
+            key, subkey = random.split(key)
+            initial_oct = create_local_oct(p, subkey)
+
+            fitted_oct, history = fit_local_oct_to_log_det(
+                initial_oct,
+                target_log_det_jet,
+                max_steps=10000,
+                verbose=False,
+                reg_weight=2.0,
+                return_history=True,
+            )
+            fitted_octs.append(fitted_oct)
+            histories.append(history)
+
+        # Define colors for each OCT's coordinate grid
+        colors = [
+            ('#2E86AB', '#A23B72'),  # Steel blue, Berry
+            ('#28A745', '#DC3545'),  # Green, Red
+            ('#FFC107', '#6F42C1'),  # Yellow, Purple
+            ('#17A2B8', '#FD7E14'),  # Cyan, Orange
+            ('#6C757D', '#343A40'),  # Gray, Dark gray
+        ]
+
+        # Plot all OCTs on the same figure
+        fig, ax = plt.subplots(figsize=(10, 8))
+
+        # Draw heatmap with first OCT (draw_heatmap=True)
+        plot_oct_with_density(
+            fitted_octs[0],
+            log_prob,
+            span=2.0,
+            xlim=(-4.0, 2.0),
+            ylim=(-1.0, 1.0),
+            num_heatmap=500,
+            draw_heatmap=True,
+            draw_grid=True,
+            draw_basis_vectors=True,
+            line_color_1=colors[0][0],
+            line_color_2=colors[0][1],
+            show=False,
+            ax=ax,
+        )
+
+        # Overlay remaining OCTs (draw_heatmap=False)
+        for i, oct in enumerate(fitted_octs[1:], start=1):
+            plot_oct_with_density(
+                oct,
+                log_prob,
+                span=0.5,
+                xlim=(-4.0, 2.0),
+                ylim=(-1.0, 1.0),
+                draw_heatmap=False,
+                draw_grid=True,
+                draw_basis_vectors=True,
+                line_color_1=colors[i][0],
+                line_color_2=colors[i][1],
+                show=False,
+                ax=ax,
+            )
+
+        ax.set_title("Fitted OCTs on Neal's Funnel at 5 Different Points")
+        plt.show()
+
+        assert fig is not None
+        assert ax is not None
+
+        plt.close(fig)
+
+        # Plot training curves
+        fig_loss, axes_loss = plt.subplots(2, 2, figsize=(12, 10))
+
+        point_labels = [f"p={p.tolist()}" for p in points]
+
+        # Total loss
+        ax_total = axes_loss[0, 0]
+        for i, (history, label) in enumerate(zip(histories, point_labels)):
+            ax_total.semilogy(history['total_loss'], label=label, color=colors[i][0])
+        ax_total.set_xlabel('Iteration')
+        ax_total.set_ylabel('Total Loss')
+        ax_total.set_title('Total Loss')
+        ax_total.legend(fontsize=8)
+        ax_total.grid(True, alpha=0.3)
+
+        # Value loss
+        ax_value = axes_loss[0, 1]
+        for i, (history, label) in enumerate(zip(histories, point_labels)):
+            ax_value.semilogy(history['value_loss'], label=label, color=colors[i][0])
+        ax_value.set_xlabel('Iteration')
+        ax_value.set_ylabel('Value Loss')
+        ax_value.set_title('Value Loss')
+        ax_value.legend(fontsize=8)
+        ax_value.grid(True, alpha=0.3)
+
+        # Gradient loss
+        ax_grad = axes_loss[1, 0]
+        for i, (history, label) in enumerate(zip(histories, point_labels)):
+            ax_grad.semilogy(history['grad_loss'], label=label, color=colors[i][0])
+        ax_grad.set_xlabel('Iteration')
+        ax_grad.set_ylabel('Gradient Loss')
+        ax_grad.set_title('Gradient Loss')
+        ax_grad.legend(fontsize=8)
+        ax_grad.grid(True, alpha=0.3)
+
+        # Hessian loss
+        ax_hess = axes_loss[1, 1]
+        for i, (history, label) in enumerate(zip(histories, point_labels)):
+            ax_hess.semilogy(history['hessian_loss'], label=label, color=colors[i][0])
+        ax_hess.set_xlabel('Iteration')
+        ax_hess.set_ylabel('Hessian Loss')
+        ax_hess.set_title('Hessian Loss')
+        ax_hess.legend(fontsize=8)
+        ax_hess.grid(True, alpha=0.3)
+
+        plt.suptitle("Training Curves for OCT Fitting", fontsize=14)
+        plt.tight_layout()
+        plt.show()
+
+        plt.close(fig_loss)

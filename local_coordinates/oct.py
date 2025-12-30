@@ -25,7 +25,7 @@ from local_coordinates.connection import Connection, get_levi_civita_connection
 from local_coordinates.connection import change_coordinates
 from local_coordinates.jacobian import Jacobian
 from local_coordinates.riemann import get_riemann_curvature_tensor, RiemannCurvatureTensor
-
+import optimistix
 
 class LocalOCT(AbstractBatchableObject):
   """
@@ -57,6 +57,9 @@ class LocalOCT(AbstractBatchableObject):
     Get the log loadings jet.
     """
     return Jet(value=self.log_s, gradient=self.beta, hessian=self.dbeta)
+
+  def get_log_det_jet(self) -> Jet:
+    return Jet(value=-self.log_s.sum(axis=0), gradient=-self.beta.sum(axis=0), hessian=-self.dbeta.sum(axis=0))
 
   def get_beta_jet(self) -> Annotated[Jet, "N N"]:
     """
@@ -246,6 +249,16 @@ class LocalOCT(AbstractBatchableObject):
     U_basis = BasisVectors(p=self.p, components=U_frame.components)
     return RiemannianMetric(basis=U_basis, components=get_identity_jet(self.p.shape[0]))
 
+  def _get_christoffel_symbols_value(self) -> Float[Array, "N N N"]:
+    dim = self.p.shape[0]
+    I = jnp.eye(dim)
+    beta_val = self.beta
+
+    # Γ^k_{ij} = β_{jk} δ^k_i - β_{kj} δ^j_i
+    # Gamma[i,j,k] = β_{kj} * I[k,i] - β_{jk} * I[j,i]
+    Gamma = jnp.einsum("kj,ki->ijk", beta_val, I) - jnp.einsum("jk,ij->ijk", beta_val, I)
+    return Gamma
+
   def get_connection(self) -> Connection:
     """
     Compute the connection from β using the thesis formula.
@@ -386,6 +399,19 @@ class LocalOCT(AbstractBatchableObject):
             f"Second Lamé equation violated for (i,j)=({i},{j}): " \
             f"U_i(β_ji) + U_j(β_ij) + β_ji² + β_ij² + Σβ_ik*β_jk = {total} (should be 0)"
 
+def _lie_bracket_loss(U: Float[Array, "N N"], beta: Float[Array, "N N"]) -> Float[Array, ""]:
+  """
+  Compute the loss measuring violation of the Lie bracket equation.
+  """
+  n = beta.shape[0]
+
+  term1 = jnp.einsum("ij,ai->ija", beta, U)
+  term2 = jnp.einsum("ji,aj->ija", beta, U)
+  lb = term1 - term2
+
+  mask = jnp.triu(jnp.ones((n, n)), k=1)[:,:,None]
+  masked_lb = lb*mask
+  return jnp.sum(masked_lb**2)
 
 def _flatness_loss(beta: Float[Array, "N N"], dbeta: Float[Array, "N N N"]) -> Float[Array, ""]:
   """
@@ -475,6 +501,116 @@ def _flatness_loss(beta: Float[Array, "N N"], dbeta: Float[Array, "N N N"]) -> F
   second_lame_loss = jnp.sum(jnp.where(upper_tri_mask, second_lame_residual**2, 0.0))
 
   return first_lame_loss + second_lame_loss
+
+def fit_local_oct_to_log_det(
+  local_oct: LocalOCT,
+  log_det_jet: Jet,
+  max_steps: int = 1000,
+  solver: Optional[optimistix.AbstractMinimiser] = None,
+  verbose: bool = False,
+  reg_weight: float = 0.1,
+  return_history: bool = False,
+) -> Union[LocalOCT, Tuple[LocalOCT, List[dict]]]:
+  """
+  Fit a LocalOCT to match a target log-determinant jet.
+
+  Optimizes over (U, log_s, beta, dbeta) to minimize:
+    1. Integrability loss (Lamé equations)
+    2. Log-det value/gradient/hessian matching loss
+    3. Orthonormality constraint on U
+
+  Args:
+    local_oct: Initial LocalOCT parameters.
+    log_det_jet: Target log-determinant jet to match.
+    max_steps: Maximum optimization steps.
+    solver: Optimistix minimizer. Defaults to BFGS.
+    verbose: If True, print optimization progress.
+    reg_weight: Weight for L1 regularization on beta and dbeta.
+    return_history: If True, return training history list along with result.
+
+  Returns:
+    If return_history is False: Optimized LocalOCT.
+    If return_history is True: Tuple of (Optimized LocalOCT, history list).
+      History is a list of dicts, one per iteration, with loss components.
+  """
+  assert log_det_jet.shape == ()
+
+  # Mutable container to capture loss history via callback
+  history: List[dict] = []
+
+  def record_loss(total_loss, aux):
+    """Callback to record loss values at each step."""
+    history.append({
+      'total_loss': float(total_loss),
+      **{k: float(v) for k, v in aux.items()}
+    })
+
+  if solver is None:
+    verbose_set = frozenset({"step", "loss"}) if verbose else frozenset()
+    solver = optimistix.BFGS(rtol=1e-6, atol=1e-6, verbose=verbose_set)
+
+  def loss_fn(params: LocalOCT, log_det_jet: Jet):
+    integrability_loss = _flatness_loss(params.beta, params.dbeta)
+
+    U = params.U
+    U, _ = jnp.linalg.qr(U)
+
+    Gamma = params._get_christoffel_symbols_value()
+    Uj_log_det_grad2 = jnp.einsum("aj,a->j", U, log_det_jet.gradient)
+    Ui_Uj_log_det_hessian2_extrinsic = jnp.einsum("ai,bj,ab->ij", U, U, log_det_jet.hessian)
+    Ui_Uj_log_det_hessian2_intrinsic = jnp.einsum("kjc,c->jk", Gamma, Uj_log_det_grad2)
+
+    Uj_log_det_grad = Uj_log_det_grad2
+    Ui_Uj_log_det_hessian = Ui_Uj_log_det_hessian2_extrinsic + Ui_Uj_log_det_hessian2_intrinsic
+
+    # model_log_det_jet = params.get_log_loadings_jet()
+    model_log_det_jet = params.get_log_det_jet()
+
+    value_loss = jnp.sum((log_det_jet.value - model_log_det_jet.value)**2)
+    grad_loss = jnp.sum((Uj_log_det_grad - model_log_det_jet.gradient)**2)
+    hessian_loss = jnp.sum((Ui_Uj_log_det_hessian - model_log_det_jet.hessian)**2)
+
+    log_det_jet_loss = value_loss + grad_loss + hessian_loss
+
+    reg = jnp.abs(params.beta).sum() + jnp.abs(params.dbeta).sum()
+
+    aux = dict(
+      integrability_loss=integrability_loss,
+      log_det_jet_loss=log_det_jet_loss,
+      reg=reg,
+      value_loss=value_loss,
+      grad_loss=grad_loss,
+      hessian_loss=hessian_loss,
+    )
+
+    total_loss = integrability_loss + log_det_jet_loss + reg_weight*reg
+
+    # Record history via callback (only when requested)
+    if return_history:
+      jax.debug.callback(record_loss, total_loss, aux)
+
+    return total_loss, aux
+
+  # p is not used in loss_fn, so its gradient is zero and it won't change
+  solution = optimistix.minimise(
+    fn=loss_fn,
+    solver=solver,
+    y0=local_oct,
+    args=log_det_jet,
+    max_steps=max_steps,
+    throw=False,
+    has_aux=True
+  )
+
+  # Force U to be orthogonal (matching the projection done in loss_fn)
+  result = solution.value
+  U_ortho, _ = jnp.linalg.qr(result.U)
+  result = eqx.tree_at(lambda x: x.U, result, U_ortho)
+
+  if return_history:
+    history = jtu.tree_map(lambda *xs: jnp.array(xs), *history)
+    return result, history
+  return result
 
 
 def _compute_dbeta_from_beta(
@@ -778,6 +914,228 @@ def plot_oct_grid(
     ax.set_title(title, fontsize=14, fontweight='light', pad=20)
 
   # Only do figure-level operations if we created the figure
+  if fig is not None:
+    plt.tight_layout()
+
+    if savepath is not None:
+      fig.savefig(savepath, bbox_inches='tight', dpi=200, facecolor='white', edgecolor='none')
+
+    if show:
+      plt.show()
+
+  return fig, ax
+
+
+def plot_oct_with_density(
+    oct: LocalOCT,
+    log_density_fn: Callable[[Array], float],
+    num_grid: int = 21,
+    num_heatmap: int = 100,
+    span: float = 0.3,
+    xlim: Optional[Tuple[float, float]] = None,
+    ylim: Optional[Tuple[float, float]] = None,
+    savepath: Optional[str] = None,
+    title: Optional[str] = None,
+    show: bool = True,
+    draw_heatmap: bool = True,
+    draw_grid: bool = True,
+    draw_basis_vectors: bool = True,
+    basis_vector_scale: float = 0.15,
+    figsize: Tuple[float, float] = (8, 8),
+    line_color_1: str = '#2E86AB',
+    line_color_2: str = '#A23B72',
+    linewidth: float = 0.8,
+    alpha: float = 0.9,
+    basepoint_color: str = '#1a1a2e',
+    arrow_color: str = '#E94F37',
+    cmap: str = 'viridis',
+    ax: Optional[Any] = None,
+):
+  """
+  Plot heatmap of exp(log_density) with OCT coordinate curves overlaid.
+
+  Args:
+    oct: The LocalOCT object to visualize.
+    log_density_fn: Function x -> log p(x) to evaluate for the heatmap.
+    num_grid: Number of coordinate grid lines in each direction.
+    num_heatmap: Resolution of the heatmap grid.
+    span: Range of the grid in each coordinate direction [-span, span].
+    xlim: Optional (xmin, xmax) tuple. If None, computed from coordinate curves.
+    ylim: Optional (ymin, ymax) tuple. If None, computed from coordinate curves.
+    savepath: If provided, save the figure to this path.
+    title: Optional title for the plot.
+    show: Whether to display the plot.
+    draw_heatmap: Whether to draw the density heatmap.
+    draw_grid: Whether to draw the coordinate grid lines.
+    draw_basis_vectors: Whether to draw the basis vectors at the origin.
+    basis_vector_scale: Scale factor for the basis vector arrows.
+    figsize: Figure size as (width, height).
+    line_color_1: Color for the first family of coordinate lines.
+    line_color_2: Color for the second family of coordinate lines.
+    linewidth: Width of the grid lines.
+    alpha: Transparency of the grid lines.
+    basepoint_color: Color of the basepoint marker.
+    arrow_color: Color of the basis vector arrows.
+    cmap: Colormap for the density heatmap.
+    ax: Optional matplotlib axes to plot on. If None, creates a new figure.
+
+  Returns:
+    fig, ax: The matplotlib figure and axes objects (fig is None if ax was provided).
+  """
+  import matplotlib.pyplot as plt
+  import matplotlib.patches as mpatches
+
+  # Get the Jacobian (Taylor coefficients) for coordinate curves
+  jacobian = oct.get_jacobian()
+  dim = oct.p.shape[0]
+
+  jet = Jet(
+      value=oct.p,
+      gradient=jacobian.value,
+      hessian=jacobian.gradient,
+  )
+
+  uvs = jnp.linspace(-span, span, num_grid)
+
+  def eval_line(along_first: bool, fixed_val: float):
+    """Evaluate points along a coordinate line."""
+    ts = uvs
+    U = jnp.zeros((ts.shape[0], dim))
+    if along_first:
+      U = U.at[:, 0].set(ts)
+      if dim > 1:
+        U = U.at[:, 1].set(fixed_val)
+    else:
+      if dim > 1:
+        U = U.at[:, 1].set(ts)
+      U = U.at[:, 0].set(fixed_val)
+
+    Y = jax.vmap(lambda w: jet(w))(U)
+    xs = Y[:, 0]
+    ys = Y[:, 1] if Y.shape[1] > 1 else jnp.zeros_like(xs)
+    return jnp.array(xs), jnp.array(ys)
+
+  # Compute all coordinate curves first to determine bounds
+  all_xs = []
+  all_ys = []
+  curves_family1 = []
+  curves_family2 = []
+
+  for v in uvs:
+    xs, ys = eval_line(True, float(v))
+    curves_family1.append((xs, ys))
+    all_xs.append(xs)
+    all_ys.append(ys)
+
+  for u in uvs:
+    xs, ys = eval_line(False, float(u))
+    curves_family2.append((xs, ys))
+    all_xs.append(xs)
+    all_ys.append(ys)
+
+  # Use provided limits or compute from coordinate curves with padding
+  if xlim is not None:
+    x_min, x_max = xlim
+  else:
+    all_xs = jnp.concatenate(all_xs)
+    x_min, x_max = float(all_xs.min()), float(all_xs.max())
+    x_pad = 0.1 * (x_max - x_min)
+    x_min -= x_pad
+    x_max += x_pad
+
+  if ylim is not None:
+    y_min, y_max = ylim
+  else:
+    all_ys = jnp.concatenate(all_ys)
+    y_min, y_max = float(all_ys.min()), float(all_ys.max())
+    y_pad = 0.1 * (y_max - y_min)
+    y_min -= y_pad
+    y_max += y_pad
+
+  # Create figure or use provided axes
+  fig = None
+  if ax is None:
+    fig, ax = plt.subplots(figsize=figsize)
+
+  # Draw heatmap (if enabled)
+  if draw_heatmap:
+    heatmap_xs = jnp.linspace(x_min, x_max, num_heatmap)
+    heatmap_ys = jnp.linspace(y_min, y_max, num_heatmap)
+    X, Y = jnp.meshgrid(heatmap_xs, heatmap_ys)
+    points = jnp.stack([X.ravel(), Y.ravel()], axis=-1)
+
+    # Evaluate log density at each point
+    log_densities = jax.vmap(log_density_fn)(points)
+    densities = jnp.exp(log_densities)
+    Z = densities.reshape(X.shape)
+
+    # Plot heatmap
+    im = ax.imshow(
+        Z,
+        extent=[x_min, x_max, y_min, y_max],
+        origin='lower',
+        cmap=cmap,
+        aspect='equal',
+        alpha=0.7,
+    )
+
+    # Add colorbar
+    if fig is not None:
+      cbar = fig.colorbar(im, ax=ax, shrink=0.8, label='density')
+
+  # Plot coordinate lines (if enabled)
+  if draw_grid:
+    for xs, ys in curves_family1:
+      ax.plot(xs, ys, color=line_color_1, linewidth=linewidth, alpha=alpha)
+
+    for xs, ys in curves_family2:
+      ax.plot(xs, ys, color=line_color_2, linewidth=linewidth, alpha=alpha)
+
+  # Mark the basepoint
+  x0, y0 = float(oct.p[0]), float(oct.p[1]) if dim > 1 else 0.0
+  ax.scatter([x0], [y0], c=basepoint_color, s=40, zorder=10, edgecolors='white', linewidths=1.5)
+
+  # Draw basis vectors
+  if draw_basis_vectors:
+    J = jacobian.value
+    if J.ndim >= 2:
+      v1 = J[:2, 0] if J.shape[1] >= 1 else jnp.zeros((2,))
+      v2 = J[:2, 1] if J.shape[1] >= 2 else jnp.zeros((2,))
+
+      for i, (vx, vy) in enumerate([(float(v1[0]), float(v1[1])),
+                                     (float(v2[0]), float(v2[1]))]):
+        dx = basis_vector_scale * vx
+        dy = basis_vector_scale * vy
+        arrow = mpatches.FancyArrowPatch(
+            (x0, y0), (x0 + dx, y0 + dy),
+            arrowstyle='-|>',
+            mutation_scale=15,
+            linewidth=2.0,
+            color=arrow_color,
+            zorder=15,
+        )
+        ax.add_patch(arrow)
+
+  # Clean up the plot
+  ax.set_aspect('equal', 'box')
+  ax.set_xlim(x_min, x_max)
+  ax.set_ylim(y_min, y_max)
+
+  ax.spines['top'].set_visible(False)
+  ax.spines['right'].set_visible(False)
+  ax.spines['bottom'].set_visible(True)
+  ax.spines['left'].set_visible(True)
+  ax.spines['bottom'].set_color('#888888')
+  ax.spines['left'].set_color('#888888')
+  ax.spines['bottom'].set_linewidth(0.8)
+  ax.spines['left'].set_linewidth(0.8)
+
+  ax.set_xlabel('x1', fontsize=12, labelpad=5)
+  ax.set_ylabel('x2', fontsize=12, labelpad=5)
+
+  if title is not None:
+    ax.set_title(title, fontsize=14, fontweight='light', pad=20)
+
   if fig is not None:
     plt.tight_layout()
 
