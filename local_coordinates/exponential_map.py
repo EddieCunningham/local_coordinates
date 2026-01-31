@@ -74,7 +74,8 @@ def exponential_map_ode(
   v: TangentVector,
   metric_fn: Callable[[Array], RiemannianMetric],
   num_steps: int = 100,
-) -> Float[Array, "N"]:
+  return_trajectory: bool = False,
+):
   """
   Compute the exponential map by numerically solving the geodesic ODE.
 
@@ -90,9 +91,14 @@ def exponential_map_ode(
     v: The initial velocity as a TangentVector at point p.
     metric_fn: Function x -> RiemannianMetric(x) that computes the metric at any point.
     num_steps: Number of ODE solver steps.
+    return_trajectory: If True, return the full trajectory instead of just the endpoint.
 
   Returns:
-    The point exp_p(v) = gamma(1) in standard coordinates.
+    If return_trajectory is False:
+      The point exp_p(v) = gamma(1) in standard coordinates, shape (N,).
+    If return_trajectory is True:
+      A tuple (ts, trajectory) where ts has shape (num_steps,) and
+      trajectory has shape (num_steps, N).
   """
   # Convert tangent vector to standard coordinates
   v_std = v.to_standard_basis()
@@ -120,23 +126,35 @@ def exponential_map_ode(
   # Solve ODE from t=0 to t=1
   term = diffrax.ODETerm(geodesic_vector_field)
   solver = diffrax.Dopri5()
-  saveat = diffrax.SaveAt(t1=True)
   stepsize_controller = diffrax.PIDController(rtol=1e-5, atol=1e-7)
+
+  if return_trajectory:
+    ts = jnp.linspace(0.0, 1.0, num_steps)
+    saveat = diffrax.SaveAt(ts=ts)
+  else:
+    saveat = diffrax.SaveAt(t1=True)
 
   sol = diffrax.diffeqsolve(
     term,
     solver,
     t0=0.0,
     t1=1.0,
-    dt0=1.0 / num_steps,
+    dt0=0.1,
     y0=y0,
     saveat=saveat,
     stepsize_controller=stepsize_controller,
+    max_steps=4096*2,
+    throw=False
   )
 
-  # Extract final position
-  y1 = sol.ys[0]  # shape (2*dim,)
-  return y1[:dim]
+  if return_trajectory:
+    # Extract positions from all saved states
+    trajectory = sol.ys[:, :dim]  # shape (num_steps, dim)
+    return sol.ts, trajectory
+  else:
+    # Extract final position
+    y1 = sol.ys[0]  # shape (2*dim,)
+    return y1[:dim]
 
 
 def exponential_map(

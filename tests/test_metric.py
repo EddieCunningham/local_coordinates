@@ -1,7 +1,8 @@
+import jax
 import jax.numpy as jnp
 import jax.random as random
 import pytest
-from local_coordinates.metric import RiemannianMetric, raise_index, lower_index
+from local_coordinates.metric import RiemannianMetric, raise_index, lower_index, pullback_metric
 from local_coordinates.tensor import change_basis, change_coordinates
 from local_coordinates.basis import BasisVectors, get_dual_basis_transform, get_standard_basis
 from local_coordinates.jet import Jet
@@ -466,3 +467,145 @@ def test_metric_change_coordinates_3d():
   assert isinstance(metric_back, RiemannianMetric)
   assert jnp.allclose(metric_back.components.value, metric.components.value)
   assert jnp.allclose(metric_back.components.gradient, metric.components.gradient, atol=1e-5)
+
+# ============================================================================
+# Tests for pullback_metric
+# ============================================================================
+
+def test_pullback_metric_identity_linear_map():
+  """
+  Test pullback of identity metric under a linear map f(x) = Ax is A^T A.
+  """
+  dim_m = 2
+  dim_n = 1
+  key = random.PRNGKey(46)
+  A = random.normal(key, (dim_n, dim_m))
+
+  def f(x):
+    return A @ x
+
+  p_m = jnp.array([1.0, 2.0])
+  p_n = f(p_m)
+
+  basis_m = get_standard_basis(p_m)
+  basis_n = get_standard_basis(p_n)
+
+  # Identity metric on N
+  h = RiemannianMetric(
+    basis=basis_n,
+    components=Jet(value=jnp.eye(dim_n), gradient=jnp.zeros((dim_n, dim_n, dim_n)), hessian=jnp.zeros((dim_n, dim_n, dim_n, dim_n)))
+  )
+
+  # Pullback metric g = f*h
+  g = pullback_metric(p_m, f, h)
+
+  # Expected g = A^T I A = A^T A
+  expected_g = A.T @ A
+  assert jnp.allclose(g.components.value, expected_g)
+
+def test_pullback_metric_polar_to_cartesian():
+  """
+  Test pullback of Euclidean metric under polar to cartesian map.
+  The result should be the standard polar metric: diag(1, r^2).
+  """
+  def polar_to_cartesian_map(q):
+    r, phi = q[0], q[1]
+    return jnp.array([r * jnp.cos(phi), r * jnp.sin(phi)])
+
+  r_val, phi_val = 2.0, jnp.pi / 4.0
+  p_polar = jnp.array([r_val, phi_val])
+  p_cart = polar_to_cartesian_map(p_polar)
+
+  basis_cart = get_standard_basis(p_cart)
+
+  # Euclidean metric on R^2
+  h = RiemannianMetric(
+    basis=basis_cart,
+    components=Jet(value=jnp.eye(2), gradient=jnp.zeros((2, 2, 2)), hessian=jnp.zeros((2, 2, 2, 2)))
+  )
+
+  # Pullback metric g = f*h
+  g = pullback_metric(p_polar, polar_to_cartesian_map, h)
+
+  # Expected g = diag(1, r^2)
+  expected_g = jnp.diag(jnp.array([1.0, r_val**2]))
+  assert jnp.allclose(g.components.value, expected_g)
+
+def test_pullback_metric_with_gradients():
+  """
+  Test that pullback_metric correctly propagates gradients of the map.
+  """
+  # Let f(x; theta) = theta * x, h = I.
+  # g = theta^2 * I.
+  # dg/dtheta = 2 * theta * I.
+
+  def f_param(x, theta):
+    return theta * x
+
+  theta_val = 2.0
+  p_m = jnp.array([1.0, 0.0])
+  p_n = f_param(p_m, theta_val)
+
+  basis_n = get_standard_basis(p_n)
+
+  h = RiemannianMetric(
+    basis=basis_n,
+    components=Jet(value=jnp.eye(1), gradient=jnp.zeros((1, 1, 1)), hessian=jnp.zeros((1, 1, 1, 1)))
+  )
+
+  # We want to differentiate w.r.t. theta.
+  # In our framework, we can wrap this in a function of theta.
+  def get_pullback_value(theta):
+    f = lambda x: f_param(x, theta)
+    g = pullback_metric(p_m, f, h)
+    return g.components.value
+
+  dg_dtheta = jax.jacobian(get_pullback_value)(theta_val)
+
+  # Expected dg/dtheta = 2 * theta * I = 2 * 2.0 * 1.0 = 4.0
+  assert jnp.allclose(dg_dtheta, jnp.array([[4.0]]))
+
+def test_compare_pullback_metric_computations():
+  """
+  Test pullback_metric with non-standard bases and random metric components.
+  """
+  key = random.PRNGKey(47)
+  k1, k2, k3, k4, k5, k6 = random.split(key, 6)
+
+  def f(q):
+    r, phi = q[0], q[1]
+    return jnp.array([r * jnp.cos(phi), r * jnp.sin(phi)])
+
+  r_val, phi_val = 2.0, jnp.pi / 4.0
+  p_polar = jnp.array([r_val, phi_val])
+  p_cart = f(p_polar)
+
+  # Non-standard bases: rotated/scaled
+  E_cart_val = random.normal(k2, (2, 2))
+
+  basis_cart = BasisVectors(
+    p=p_cart,
+    components=Jet(value=E_cart_val, gradient=jnp.zeros((2, 2, 2)), hessian=jnp.zeros((2, 2, 2, 2)))
+  )
+
+  # Euclidean metric components on N (Cartesian space)
+  h = RiemannianMetric(
+    basis=basis_cart,
+    components=Jet(value=jnp.eye(2), gradient=jnp.zeros((2, 2, 2)), hessian=jnp.zeros((2, 2, 2, 2)))
+  )
+
+  # Pullback metric g = f*h
+  g = pullback_metric(p_polar, f, h)
+
+
+  # Expected g calculation:
+  # G_jac = df/dq (Jacobian in standard coordinates)
+  G_jac = jax.jacobian(f)(p_polar)
+
+  # g_expected = G_jac^T @ h_standard @ G_jac
+  # h_standard = inv(E_cart)^T @ h_val @ inv(E_cart)
+  # But here h is defined in basis_cart, so we need to transform it to standard basis first
+  h_standard = change_basis(h, get_standard_basis(p_cart)).components.value
+  expected_g_val = G_jac.T @ h_standard @ G_jac
+
+  assert jnp.allclose(g.components.value, expected_g_val)

@@ -70,9 +70,94 @@ def _get_rnc_jacobian(gamma_bar: Jet, dxdv: Array) -> Jacobian:
   return J_v_to_x
 
 
-def _compute_rnc_jacobians(metric: RiemannianMetric) -> Tuple[Jacobian, Jacobian]:
+def _get_inverse_rnc_jacobian(gamma_bar: Jet, dxdv: Array) -> Jacobian:
   """
-  Compute both RNC Jacobians efficiently.
+  Compute the inverse RNC Jacobian J_x_to_v (dv/dx) directly.
+
+  This function computes the Jacobian for the map v(x) using explicit formulas
+  derived from the general inverse-Jacobian formula, simplified for RNC.
+
+  The formulas are:
+    - Value: K = J^{-1} (matrix inverse)
+    - Gradient: d²v/dx² = K @ Γ (simpler than general O(n^5) formula)
+    - Hessian: d³v/dx³ = (1/3) K @ [∂Γ terms + Γ² terms]
+
+  The hessian formula is derived by substituting the RNC-specific forms of the
+  forward Jacobian derivatives into the general inverse formula and simplifying.
+  The Γ² contributions from term_C (third derivative of forward map) and term_B
+  (products of second derivatives) partially cancel, leaving a 1/3 factor.
+
+  Args:
+    gamma_bar: Christoffel symbols as a Jet with value Γ^i_pq and gradient ∂_m Γ^i_pq.
+    dxdv: The orthonormal frame matrix J = dx/dv.
+
+  Returns:
+    J_x_to_v: The inverse Jacobian (dv/dx) at x = p.
+  """
+  # Value: K = J^{-1}
+  # K^i_j = (J^{-1})^i_j = dv^i/dx^j
+  dvdx = jnp.linalg.inv(dxdv)
+
+  # Gradient: d²v^i/dx^j dx^k = K^i_c Γ^c_jk
+  # This is much simpler than the general inverse formula which requires O(n^5) ops.
+  # gamma_bar.value[j, k, c] = Γ^c_jk
+  d2vdx2 = jnp.einsum("ic,jkc->ijk", dvdx, gamma_bar.value)
+
+  # Hessian: d³v^i/dx^j dx^k dx^l
+  #
+  # The formula is derived from the general inverse-Jacobian formula:
+  #   S^i_jkl = term_C + term_B
+  # where term_C involves the third derivative of the forward map and
+  # term_B involves products of second derivatives.
+  #
+  # After substituting the RNC-specific forms and simplifying:
+  #   S^i_jkl = (1/3) K^i_a [∂_l Γ^a_jk + ∂_j Γ^a_kl + ∂_k Γ^a_lj
+  #                         + Γ^a_cl Γ^c_jk + Γ^a_cj Γ^c_kl + Γ^a_ck Γ^c_lj]
+  #
+  # The 1/3 factor arises because:
+  # - term_C contributes: (1/3)[∂Γ terms] - (2/3)[Γ² terms]
+  # - term_B contributes: [Γ² terms]
+  # - Combined Γ² terms: -2/3 + 1 = 1/3
+
+  # Derivative terms: ∂_l Γ^a_jk + ∂_j Γ^a_kl + ∂_k Γ^a_lj
+  # gamma_bar.gradient[j, k, a, l] = ∂_l Γ^a_jk
+  deriv_term1 = jnp.transpose(gamma_bar.gradient, (2, 3, 0, 1))  # a, l, j, k -> a, j, k, l
+  deriv_term2 = jnp.transpose(gamma_bar.gradient, (2, 0, 1, 3))  # a, j, k, l (from [k,l,a,j])
+  deriv_term3 = jnp.transpose(gamma_bar.gradient, (2, 1, 3, 0))  # a, j, k, l (from [l,j,a,k])
+
+  deriv_terms = deriv_term1 + deriv_term2 + deriv_term3
+
+  # Γ² terms: Γ^a_cl Γ^c_jk + Γ^a_cj Γ^c_kl + Γ^a_ck Γ^c_lj
+  # gamma_bar.value[c, l, a] = Γ^a_cl, gamma_bar.value[j, k, c] = Γ^c_jk
+  # So Γ^a_cl Γ^c_jk = einsum over c with result shape (a, j, k, l)
+  gamma2_term1 = jnp.einsum("cla,jkc->ajkl", gamma_bar.value, gamma_bar.value)
+  gamma2_term2 = jnp.einsum("cja,klc->ajkl", gamma_bar.value, gamma_bar.value)
+  gamma2_term3 = jnp.einsum("cka,ljc->ajkl", gamma_bar.value, gamma_bar.value)
+
+  gamma2_terms = gamma2_term1 + gamma2_term2 + gamma2_term3
+
+  # Combine with 1/3 factor and contract with K
+  bracket = deriv_terms + gamma2_terms
+  d3vdx3 = jnp.einsum("ia,ajkl->ijkl", dvdx, bracket) / 3
+
+  return Jacobian(value=dvdx, gradient=d2vdx2, hessian=d3vdx3)
+
+
+def _compute_rnc_jacobians(
+  metric: RiemannianMetric,
+  compute_x_to_v: bool = True,
+  compute_v_to_x: bool = True
+) -> Tuple[Optional[Jacobian], Optional[Jacobian]]:
+  """
+  Compute RNC Jacobians efficiently.
+
+  Jacobians are computed directly using explicit formulas, avoiding
+  the expensive general inverse-Jacobian computation.
+
+  Args:
+    metric: The Riemannian metric.
+    compute_x_to_v: Whether to compute the inverse Jacobian (dv/dx).
+    compute_v_to_x: Whether to compute the forward Jacobian (dx/dv).
 
   Returns:
     (J_x_to_v, J_v_to_x): The inverse Jacobian (dv/dx) and forward Jacobian (dx/dv).
@@ -90,8 +175,9 @@ def _compute_rnc_jacobians(metric: RiemannianMetric) -> Tuple[Jacobian, Jacobian
 
   dxdv = jnp.einsum("ij,j->ij", eigenvectors, jax.lax.rsqrt(eigenvalues))
 
-  J_v_to_x = _get_rnc_jacobian(gamma_bar, dxdv)
-  J_x_to_v = J_v_to_x.get_inverse()
+  # Compute Jacobians directly using explicit formulas
+  J_v_to_x = _get_rnc_jacobian(gamma_bar, dxdv) if compute_v_to_x else None
+  J_x_to_v = _get_inverse_rnc_jacobian(gamma_bar, dxdv) if compute_x_to_v else None
 
   return J_x_to_v, J_v_to_x
 
@@ -113,7 +199,7 @@ def get_transformation_to_riemann_normal_coordinates(
   if J_x_to_v is not None:
     return J_x_to_v
 
-  J_x_to_v, _ = _compute_rnc_jacobians(metric)
+  J_x_to_v, _ = _compute_rnc_jacobians(metric, compute_v_to_x=False)
   return J_x_to_v
 
 
@@ -134,7 +220,7 @@ def get_transformation_from_riemann_normal_coordinates(
   if J_v_to_x is not None:
     return J_v_to_x
 
-  _, J_v_to_x = _compute_rnc_jacobians(metric)
+  _, J_v_to_x = _compute_rnc_jacobians(metric, compute_x_to_v=False)
   return J_v_to_x
 
 

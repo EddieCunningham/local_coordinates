@@ -2000,3 +2000,227 @@ def test_change_coordinates_then_change_basis_recovers_original():
     "change_basis should recover original components"
 
 
+# =============================================================================
+# Tests for direct inverse RNC Jacobian computation
+# =============================================================================
+
+def test_direct_inverse_jacobian_matches_general_inverse():
+  """
+  Test that the direct computation of J_x_to_v matches the general inverse.
+
+  The direct formula computes J_x_to_v using explicit formulas derived from
+  differentiating v(x(v)) = v, which should be equivalent to but more
+  efficient than the general inverse-Jacobian computation.
+  """
+  from local_coordinates.normal_coords import (
+    _get_rnc_jacobian,
+    _get_inverse_rnc_jacobian
+  )
+
+  key = random.PRNGKey(42)
+  dim = 3
+  metric = create_random_metric(key, dim=dim)
+
+  # Get the standard basis metric and connection
+  standard_basis = get_standard_basis(metric.basis.p)
+  metric_std = change_basis(metric, standard_basis)
+  connection = get_levi_civita_connection(metric_std)
+  gamma_bar = connection.christoffel_symbols
+
+  # Compute the orthonormal frame
+  gij = metric_std.components.value
+  eigenvalues, eigenvectors = jnp.linalg.eigh(gij)
+  dxdv = jnp.einsum("ij,j->ij", eigenvectors, jax.lax.rsqrt(eigenvalues))
+
+  # Compute J_v_to_x using the forward formula
+  J_v_to_x = _get_rnc_jacobian(gamma_bar, dxdv)
+
+  # Compute J_x_to_v using the direct formula
+  J_x_to_v_direct = _get_inverse_rnc_jacobian(gamma_bar, dxdv)
+
+  # Compute J_x_to_v using the general inverse
+  J_x_to_v_inverse = J_v_to_x.get_inverse()
+
+  # Compare value (matrix inverse)
+  assert jnp.allclose(J_x_to_v_direct.value, J_x_to_v_inverse.value, atol=1e-10), \
+    "Direct and inverse-based J_x_to_v values should match"
+
+  # Compare gradient (second derivatives)
+  assert jnp.allclose(J_x_to_v_direct.gradient, J_x_to_v_inverse.gradient, atol=1e-9), \
+    "Direct and inverse-based J_x_to_v gradients should match"
+
+  # Compare hessian (third derivatives)
+  assert jnp.allclose(J_x_to_v_direct.hessian, J_x_to_v_inverse.hessian, atol=1e-8), \
+    "Direct and inverse-based J_x_to_v hessians should match"
+
+
+def test_direct_inverse_jacobian_different_dimensions():
+  """
+  Test the direct inverse Jacobian computation for various dimensions.
+  """
+  from local_coordinates.normal_coords import (
+    _get_rnc_jacobian,
+    _get_inverse_rnc_jacobian
+  )
+
+  for dim in [2, 3, 4, 5]:
+    key = random.PRNGKey(dim)
+    metric = create_random_metric(key, dim=dim)
+
+    standard_basis = get_standard_basis(metric.basis.p)
+    metric_std = change_basis(metric, standard_basis)
+    connection = get_levi_civita_connection(metric_std)
+    gamma_bar = connection.christoffel_symbols
+
+    gij = metric_std.components.value
+    eigenvalues, eigenvectors = jnp.linalg.eigh(gij)
+    dxdv = jnp.einsum("ij,j->ij", eigenvectors, jax.lax.rsqrt(eigenvalues))
+
+    J_v_to_x = _get_rnc_jacobian(gamma_bar, dxdv)
+    J_x_to_v_direct = _get_inverse_rnc_jacobian(gamma_bar, dxdv)
+    J_x_to_v_inverse = J_v_to_x.get_inverse()
+
+    assert jnp.allclose(J_x_to_v_direct.value, J_x_to_v_inverse.value, atol=1e-10), \
+      f"Values should match for dim={dim}"
+    assert jnp.allclose(J_x_to_v_direct.gradient, J_x_to_v_inverse.gradient, atol=1e-9), \
+      f"Gradients should match for dim={dim}"
+    assert jnp.allclose(J_x_to_v_direct.hessian, J_x_to_v_inverse.hessian, atol=1e-8), \
+      f"Hessians should match for dim={dim}"
+
+
+def test_direct_inverse_jacobian_is_inverse_of_forward():
+  """
+  Test that J_x_to_v and J_v_to_x are inverses at the value level.
+  """
+  from local_coordinates.normal_coords import (
+    _get_rnc_jacobian,
+    _get_inverse_rnc_jacobian
+  )
+
+  key = random.PRNGKey(123)
+  dim = 4
+  metric = create_random_metric(key, dim=dim)
+
+  standard_basis = get_standard_basis(metric.basis.p)
+  metric_std = change_basis(metric, standard_basis)
+  connection = get_levi_civita_connection(metric_std)
+  gamma_bar = connection.christoffel_symbols
+
+  gij = metric_std.components.value
+  eigenvalues, eigenvectors = jnp.linalg.eigh(gij)
+  dxdv = jnp.einsum("ij,j->ij", eigenvectors, jax.lax.rsqrt(eigenvalues))
+
+  J_v_to_x = _get_rnc_jacobian(gamma_bar, dxdv)
+  J_x_to_v = _get_inverse_rnc_jacobian(gamma_bar, dxdv)
+
+  # Check that the values are matrix inverses
+  product_forward = J_x_to_v.value @ J_v_to_x.value
+  product_backward = J_v_to_x.value @ J_x_to_v.value
+
+  assert jnp.allclose(product_forward, jnp.eye(dim), atol=1e-10), \
+    "J_x_to_v @ J_v_to_x should be identity"
+  assert jnp.allclose(product_backward, jnp.eye(dim), atol=1e-10), \
+    "J_v_to_x @ J_x_to_v should be identity"
+
+
+def test_direct_inverse_jacobian_gradient_symmetry():
+  """
+  Test that the gradient of the inverse Jacobian is symmetric in its last two indices.
+
+  The gradient represents d²v^i/dx^m dx^n, which must be symmetric in (m, n)
+  because partial derivatives commute.
+  """
+  from local_coordinates.normal_coords import _get_inverse_rnc_jacobian
+
+  key = random.PRNGKey(456)
+  dim = 3
+  metric = create_random_metric(key, dim=dim)
+
+  standard_basis = get_standard_basis(metric.basis.p)
+  metric_std = change_basis(metric, standard_basis)
+  connection = get_levi_civita_connection(metric_std)
+  gamma_bar = connection.christoffel_symbols
+
+  gij = metric_std.components.value
+  eigenvalues, eigenvectors = jnp.linalg.eigh(gij)
+  dxdv = jnp.einsum("ij,j->ij", eigenvectors, jax.lax.rsqrt(eigenvalues))
+
+  J_x_to_v = _get_inverse_rnc_jacobian(gamma_bar, dxdv)
+
+  # Check symmetry: gradient[i, m, n] should equal gradient[i, n, m]
+  gradient_transposed = jnp.transpose(J_x_to_v.gradient, (0, 2, 1))
+  assert jnp.allclose(J_x_to_v.gradient, gradient_transposed, atol=1e-10), \
+    "Gradient should be symmetric in last two indices"
+
+
+def test_direct_inverse_jacobian_hessian_symmetry():
+  """
+  Test that the hessian of the inverse Jacobian is symmetric in its last three indices.
+
+  The hessian represents d³v^i/dx^m dx^n dx^o, which must be fully symmetric
+  in (m, n, o) because partial derivatives commute.
+  """
+  from local_coordinates.normal_coords import _get_inverse_rnc_jacobian
+
+  key = random.PRNGKey(789)
+  dim = 3
+  metric = create_random_metric(key, dim=dim)
+
+  standard_basis = get_standard_basis(metric.basis.p)
+  metric_std = change_basis(metric, standard_basis)
+  connection = get_levi_civita_connection(metric_std)
+  gamma_bar = connection.christoffel_symbols
+
+  gij = metric_std.components.value
+  eigenvalues, eigenvectors = jnp.linalg.eigh(gij)
+  dxdv = jnp.einsum("ij,j->ij", eigenvectors, jax.lax.rsqrt(eigenvalues))
+
+  J_x_to_v = _get_inverse_rnc_jacobian(gamma_bar, dxdv)
+
+  # Check all permutations of the last three indices
+  hess = J_x_to_v.hessian
+  perms = [
+    (0, 1, 2, 3),  # i, m, n, o (original)
+    (0, 1, 3, 2),  # i, m, o, n
+    (0, 2, 1, 3),  # i, n, m, o
+    (0, 2, 3, 1),  # i, n, o, m
+    (0, 3, 1, 2),  # i, o, m, n
+    (0, 3, 2, 1),  # i, o, n, m
+  ]
+
+  for perm in perms[1:]:  # Compare all permutations to original
+    assert jnp.allclose(hess, jnp.transpose(hess, perm), atol=1e-10), \
+      f"Hessian should be symmetric under permutation {perm}"
+
+
+def test_rnc_downstream_still_works_with_direct_jacobian():
+  """
+  Test that downstream RNC functionality still works correctly with the
+  direct Jacobian computation.
+
+  This verifies that:
+  1. The metric is identity in RNC
+  2. The metric gradient vanishes in RNC
+  3. Christoffel symbols vanish in RNC
+  """
+  key = random.PRNGKey(999)
+  dim = 4
+  metric = create_random_metric(key, dim=dim)
+
+  # Transform to RNC
+  metric_rnc = to_riemann_normal_coordinates(metric)
+
+  # Check that metric is identity at origin
+  assert jnp.allclose(metric_rnc.components.value, jnp.eye(dim), atol=1e-5), \
+    "Metric should be identity in RNC"
+
+  # Check that metric gradient vanishes at origin
+  assert jnp.allclose(metric_rnc.components.gradient, 0.0, atol=1e-5), \
+    "Metric gradient should vanish in RNC"
+
+  # Check that Christoffel symbols vanish at origin
+  connection_rnc = get_levi_civita_connection(metric_rnc)
+  assert jnp.allclose(connection_rnc.christoffel_symbols.value, 0.0, atol=1e-5), \
+    "Christoffel symbols should vanish in RNC"
+
+

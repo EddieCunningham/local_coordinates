@@ -7,10 +7,12 @@ import equinox as eqx
 from jaxtyping import Array, Float, PRNGKeyArray
 from linsdex import AbstractBatchableObject
 from plum import dispatch
-from local_coordinates.jet import Jet, jet_decorator
-from local_coordinates.basis import BasisVectors, get_dual_basis_transform
+from local_coordinates.jet import Jet, jet_decorator, function_to_jet
+from local_coordinates.basis import BasisVectors, get_dual_basis_transform, get_standard_basis
 from local_coordinates.tensor import Tensor, TensorType
 from local_coordinates.tangent import TangentVector, change_basis
+from local_coordinates.jacobian import function_to_jacobian
+from local_coordinates.jet import get_identity_jet
 
 class RiemannianMetric(Tensor):
   """
@@ -187,3 +189,46 @@ def lower_index(tensor: Tensor, metric: RiemannianMetric, index: int) -> Tensor:
     basis=tensor.basis,
     components=new_components,
   )
+
+def get_euclidean_metric(p: Array) -> RiemannianMetric:
+  """
+  Get the Euclidean metric on R^p.shape[0].
+  """
+  return RiemannianMetric(
+    basis=get_standard_basis(p),
+    components=get_identity_jet(p.shape[0])
+  )
+
+def pullback_metric(
+  x: Array,
+  f: Callable[[Array], Array],
+  g: RiemannianMetric,
+) -> RiemannianMetric:
+  """
+  Compute the pullback metric f^* g of a metric g on N under a map f: M -> N.
+
+  The pullback metric g_f = f^* g is defined by
+    (g_f)_ij(x) = (df^a/dx^i) g_ab(f(x)) (df^b/dx^j)
+
+  Args:
+    x: The point at which to evaluate the pullback metric.
+    f: The map from M to N.
+    g: The Riemannian metric g on N.
+
+  Returns:
+    The pullback metric g_f on M.
+  """
+  # Go to the standard basis
+  g: RiemannianMetric = change_basis(g, get_standard_basis(g.basis.p))
+
+  # Compute the Jacobian of f at x (in standard coordinates)
+  G_jac = function_to_jacobian(f, x)
+  G = Jet(value=G_jac.value, gradient=G_jac.gradient, hessian=G_jac.hessian)
+
+  @jet_decorator
+  def compute_pullback(G_val, g_val):
+    return jnp.einsum("ai,bj,ab->ij", G_val, G_val, g_val)
+  gf_components: Jet = compute_pullback(G, g.components)
+
+  standard_basis = get_standard_basis(x)
+  return RiemannianMetric(basis=standard_basis, components=gf_components)
