@@ -122,4 +122,4 @@ The derivatives of the metric are needed for computing Christoffel symbols and c
 - Metric components are stored as a Jet to track derivatives
 - The basis vectors are always expressed in the standard Euclidean basis
 - Use `function_to_jet(metric_components, p)` to compute metric with derivatives
-- Always enable 64-bit precision: `jax.config.update("jax_enable_x64", True)`
+- 64-bit precision is recommended: `jax.config.update("jax_enable_x64", True)`

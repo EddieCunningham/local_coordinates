@@ -26,7 +26,7 @@ from local_coordinates.metric import RiemannianMetric, get_euclidean_metric
 
 ## Prerequisites
 
-Always enable 64-bit precision for numerical stability:
+Enabling 64-bit precision is recommended for improved numerical stability:
 
 ```python
 jax.config.update("jax_enable_x64", True)

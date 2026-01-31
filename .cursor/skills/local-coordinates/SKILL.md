@@ -60,7 +60,7 @@ from local_coordinates.metric import RiemannianMetric
 from local_coordinates.connection import get_levi_civita_connection
 from local_coordinates.riemann import get_riemann_curvature_tensor, get_ricci_tensor
 
-# Enable 64-bit precision (required for numerical stability)
+# Enable 64-bit precision (recommended for numerical stability)
 jax.config.update("jax_enable_x64", True)
 
 # Define a position-dependent metric
@@ -123,7 +123,7 @@ local_coordinates/
 
 ### 64-bit Precision
 
-Always enable 64-bit precision at the start of your script:
+Enabling 64-bit precision is recommended for improved numerical stability:
 
 ```python
 jax.config.update("jax_enable_x64", True)
