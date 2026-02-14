@@ -17,6 +17,7 @@ from local_coordinates.exponential_map import (
   exponential_map_ode,
   exponential_map,
   logarithmic_map_taylor,
+  logarithmic_map_ode,
 )
 from typing import Callable
 
@@ -201,6 +202,46 @@ def test_logarithmic_map_taylor_euclidean():
 
 
 # =============================================================================
+# Tests for logarithmic_map_ode
+# =============================================================================
+
+def test_logarithmic_map_ode_at_p():
+  """log_p(p) should return 0."""
+  p = jnp.array([1.0, 2.0])
+  metric_fn = _nearly_flat_metric_fn(epsilon=0.1)
+
+  v = logarithmic_map_ode(p, p, metric_fn)
+
+  assert jnp.allclose(v, jnp.zeros(2), atol=1e-6)
+
+
+def test_logarithmic_map_ode_euclidean():
+  """For flat metric, log_p(q) = q - p."""
+  p = jnp.array([1.0, 2.0])
+  q = jnp.array([1.3, 1.7])
+
+  v = logarithmic_map_ode(p, q, _euclidean_metric_fn)
+
+  expected = q - p
+  assert jnp.allclose(v, expected, atol=1e-4)
+
+
+def test_logarithmic_map_ode_euclidean_3d():
+  """For flat metric in 3D, log_p(q) = q - p."""
+  p = jnp.array([1.0, 2.0, 0.5])
+  q = jnp.array([1.3, 1.7, 0.8])
+
+  def g_components(x):
+    return jnp.eye(3)
+
+  metric_fn = make_metric_fn(g_components)
+  v = logarithmic_map_ode(p, q, metric_fn)
+
+  expected = q - p
+  assert jnp.allclose(v, expected, atol=1e-4)
+
+
+# =============================================================================
 # Tests for exp/log roundtrip
 # =============================================================================
 
@@ -258,6 +299,79 @@ def test_log_exp_roundtrip():
 
   q_recovered = exponential_map_taylor(metric, v)
   assert jnp.allclose(q, q_recovered, atol=1e-5)
+
+
+# =============================================================================
+# Tests for exp/log roundtrip with ODE methods
+# =============================================================================
+
+def test_exp_log_roundtrip_ode():
+  """exp_p(log_p(q)) should recover q using ODE methods."""
+  p = jnp.array([1.0, 0.5])
+  metric_fn = _nearly_flat_metric_fn(epsilon=0.1)
+
+  # q is some distance from p
+  q = jnp.array([1.2, 0.6])
+
+  # Compute log_p(q)
+  v = logarithmic_map_ode(p, q, metric_fn)
+
+  # Compute exp_p(v)
+  v_tan = create_tangent_vector(p, v)
+  q_recovered = exponential_map_ode(v_tan, metric_fn)
+
+  assert jnp.allclose(q, q_recovered, atol=1e-4), \
+    f"Original: {q}, Recovered: {q_recovered}"
+
+
+def test_log_exp_roundtrip_ode():
+  """log_p(exp_p(v)) should recover v using ODE methods."""
+  p = jnp.array([1.0, 0.5])
+  metric_fn = _nearly_flat_metric_fn(epsilon=0.1)
+
+  # Initial velocity
+  v_arr = jnp.array([0.2, -0.1])
+  v = create_tangent_vector(p, v_arr)
+
+  # Compute exp_p(v)
+  q = exponential_map_ode(v, metric_fn)
+
+  # Compute log_p(q)
+  v_recovered = logarithmic_map_ode(p, q, metric_fn)
+
+  assert jnp.allclose(v_arr, v_recovered, atol=1e-4), \
+    f"Original: {v_arr}, Recovered: {v_recovered}"
+
+
+def test_exp_log_roundtrip_ode_euclidean():
+  """Roundtrip should be exact for Euclidean metric."""
+  p = jnp.array([1.0, 2.0])
+  q = jnp.array([1.5, 1.5])
+
+  v = logarithmic_map_ode(p, q, _euclidean_metric_fn)
+  v_tan = create_tangent_vector(p, v)
+  q_recovered = exponential_map_ode(v_tan, _euclidean_metric_fn)
+
+  assert jnp.allclose(q, q_recovered, atol=1e-4)
+
+
+def test_exp_log_roundtrip_ode_various_points():
+  """Test roundtrip for various starting points and targets."""
+  metric_fn = _nearly_flat_metric_fn(epsilon=0.1)
+
+  test_cases = [
+    (jnp.array([0.0, 0.0]), jnp.array([0.3, 0.2])),
+    (jnp.array([1.0, 1.0]), jnp.array([1.2, 0.8])),
+    (jnp.array([-0.5, 0.5]), jnp.array([-0.3, 0.7])),
+  ]
+
+  for p, q in test_cases:
+    v = logarithmic_map_ode(p, q, metric_fn)
+    v_tan = create_tangent_vector(p, v)
+    q_recovered = exponential_map_ode(v_tan, metric_fn)
+
+    assert jnp.allclose(q, q_recovered, atol=1e-4), \
+      f"Failed at p={p}, q={q}: Recovered={q_recovered}"
 
 
 # =============================================================================
@@ -531,6 +645,100 @@ def test_exponential_map_high_dimension():
 
 
 # =============================================================================
+# Tests for Taylor/ODE agreement (logarithmic map)
+# =============================================================================
+
+def test_log_taylor_ode_agreement_small_displacement():
+  """Taylor and ODE logarithmic maps should agree for small displacements.
+
+  Note: Taylor returns v in RNC, ODE returns v in standard coordinates.
+  We compare via the roundtrip: both should map back to the same q.
+  """
+  p = jnp.array([1.0, 0.5])
+  epsilon = 0.1
+  metric = create_nearly_flat_metric(p, epsilon=epsilon)
+  metric_fn = _nearly_flat_metric_fn(epsilon=epsilon)
+
+  # q is close to p
+  q = jnp.array([1.03, 0.52])
+
+  # Get Taylor result (in RNC)
+  v_taylor_rnc = logarithmic_map_taylor(metric, q)
+
+  # Get ODE result (in standard coords)
+  v_ode_std = logarithmic_map_ode(p, q, metric_fn)
+
+  # Both should map back to q via their respective exponential maps
+  # For Taylor: convert RNC to standard, then use Taylor exp
+  _, J_v_to_x = get_rnc_jacobians(metric)
+  v_taylor_std = J_v_to_x.value @ v_taylor_rnc
+  v_taylor = create_tangent_vector(p, v_taylor_std)
+  q_taylor = exponential_map_taylor(metric, v_taylor)
+
+  # For ODE: use ODE exp directly
+  v_ode = create_tangent_vector(p, v_ode_std)
+  q_ode = exponential_map_ode(v_ode, metric_fn)
+
+  # Both should recover q
+  assert jnp.allclose(q_taylor, q, atol=1e-4), \
+    f"Taylor roundtrip: q={q}, recovered={q_taylor}"
+  assert jnp.allclose(q_ode, q, atol=1e-4), \
+    f"ODE roundtrip: q={q}, recovered={q_ode}"
+
+
+def test_log_taylor_ode_agreement_euclidean():
+  """For Euclidean metric, Taylor and ODE should give the same result.
+
+  In Euclidean space, both methods should give v = q - p.
+  """
+  p = jnp.array([1.0, 2.0])
+  metric = create_euclidean_metric(p)
+
+  q = jnp.array([1.2, 1.8])
+
+  v_taylor = logarithmic_map_taylor(metric, q)
+  v_ode = logarithmic_map_ode(p, q, _euclidean_metric_fn)
+
+  # Both should equal q - p
+  expected = q - p
+  assert jnp.allclose(v_taylor, expected, atol=1e-5)
+  assert jnp.allclose(v_ode, expected, atol=1e-4)
+
+
+def test_log_taylor_ode_consistency_via_roundtrip():
+  """Both methods should be consistent via their respective roundtrips."""
+  p = jnp.array([0.5, 0.5])
+  epsilon = 0.1
+  metric = create_nearly_flat_metric(p, epsilon=epsilon)
+  metric_fn = _nearly_flat_metric_fn(epsilon=epsilon)
+
+  # Various test points
+  test_points = [
+    jnp.array([0.52, 0.51]),
+    jnp.array([0.48, 0.53]),
+    jnp.array([0.55, 0.45]),
+  ]
+
+  for q in test_points:
+    # Taylor roundtrip
+    v_taylor_rnc = logarithmic_map_taylor(metric, q)
+    _, J_v_to_x = get_rnc_jacobians(metric)
+    v_taylor_std = J_v_to_x.value @ v_taylor_rnc
+    v_taylor = create_tangent_vector(p, v_taylor_std)
+    q_taylor = exponential_map_taylor(metric, v_taylor)
+
+    # ODE roundtrip
+    v_ode_std = logarithmic_map_ode(p, q, metric_fn)
+    v_ode = create_tangent_vector(p, v_ode_std)
+    q_ode = exponential_map_ode(v_ode, metric_fn)
+
+    assert jnp.allclose(q_taylor, q, atol=1e-4), \
+      f"Taylor failed at q={q}"
+    assert jnp.allclose(q_ode, q, atol=1e-4), \
+      f"ODE failed at q={q}"
+
+
+# =============================================================================
 # Tests against known closed-form exponential maps
 # =============================================================================
 
@@ -612,6 +820,63 @@ class TestHyperbolicPlane:
       assert jnp.allclose(q_ode, q_exact, atol=1e-4), \
         f"Failed at p={p}, v_y={v_y}: ODE={q_ode}, Exact={q_exact}"
 
+  # -------------------------------------------------------------------------
+  # Logarithmic map tests
+  # -------------------------------------------------------------------------
+
+  @staticmethod
+  def log_vertical_exact(p: jnp.ndarray, q: jnp.ndarray) -> jnp.ndarray:
+    """
+    Exact logarithmic map for vertical geodesic.
+
+    Inverse of exp_p((0, v_y)) = (x₀, y₀ * exp(v_y / y₀))
+    Solving for v_y: v_y = y₀ * log(q_y / y₀)
+
+    log_p(q) = (0, y₀ * log(q_y / y₀)) for q = (x₀, q_y)
+    """
+    x0, y0 = p[0], p[1]
+    q_y = q[1]
+    v_y = y0 * jnp.log(q_y / y0)
+    return jnp.array([0.0, v_y])
+
+  def test_log_vertical_geodesic_upward(self):
+    """Test logarithmic map for point above p on vertical geodesic."""
+    p = jnp.array([0.5, 1.0])
+    # q is above p on the same vertical line
+    q = jnp.array([0.5, 1.5])
+
+    v_exact = self.log_vertical_exact(p, q)
+    v_ode = logarithmic_map_ode(p, q, self.metric_fn)
+
+    assert jnp.allclose(v_ode, v_exact, atol=1e-4), \
+      f"ODE: {v_ode}, Exact: {v_exact}"
+
+  def test_log_vertical_geodesic_downward(self):
+    """Test logarithmic map for point below p on vertical geodesic."""
+    p = jnp.array([0.0, 2.0])
+    # q is below p
+    q = jnp.array([0.0, 1.5])
+
+    v_exact = self.log_vertical_exact(p, q)
+    v_ode = logarithmic_map_ode(p, q, self.metric_fn)
+
+    assert jnp.allclose(v_ode, v_exact, atol=1e-4), \
+      f"ODE: {v_ode}, Exact: {v_exact}"
+
+  def test_log_exp_roundtrip_hyperbolic(self):
+    """Test that log_p(exp_p(v)) = v for hyperbolic plane."""
+    p = jnp.array([0.5, 1.0])
+    v_arr = jnp.array([0.0, 0.3])
+
+    # Compute q = exp_p(v)
+    q = self.exp_vertical_exact(p, v_arr[1])
+
+    # Compute log_p(q)
+    v_recovered = logarithmic_map_ode(p, q, self.metric_fn)
+
+    assert jnp.allclose(v_arr, v_recovered, atol=1e-4), \
+      f"Original: {v_arr}, Recovered: {v_recovered}"
+
 
 class TestSphere:
   """
@@ -688,6 +953,60 @@ class TestSphere:
 
       assert jnp.allclose(q_ode, q_exact, atol=1e-4), \
         f"Failed at p={p}, v_θ={v_theta}: ODE={q_ode}, Exact={q_exact}"
+
+  # -------------------------------------------------------------------------
+  # Logarithmic map tests
+  # -------------------------------------------------------------------------
+
+  @staticmethod
+  def log_meridian_exact(p: jnp.ndarray, q: jnp.ndarray) -> jnp.ndarray:
+    """
+    Exact logarithmic map along a meridian.
+
+    Inverse of exp_p((v_θ, 0)) = (θ₀ + v_θ, φ₀)
+    log_p(q) = (q_θ - θ₀, 0)
+    """
+    theta0, phi0 = p[0], p[1]
+    q_theta = q[0]
+    return jnp.array([q_theta - theta0, 0.0])
+
+  def test_log_meridian_geodesic_northward(self):
+    """Test logarithmic map for point north of p along meridian."""
+    p = jnp.array([jnp.pi / 2, 0.0])  # On equator
+    # q is north of p (smaller theta)
+    q = jnp.array([jnp.pi / 2 - 0.3, 0.0])
+
+    v_exact = self.log_meridian_exact(p, q)
+    v_ode = logarithmic_map_ode(p, q, self.metric_fn)
+
+    assert jnp.allclose(v_ode, v_exact, atol=1e-4), \
+      f"ODE: {v_ode}, Exact: {v_exact}"
+
+  def test_log_meridian_geodesic_southward(self):
+    """Test logarithmic map for point south of p along meridian."""
+    p = jnp.array([jnp.pi / 3, jnp.pi / 4])
+    # q is south of p (larger theta)
+    q = jnp.array([jnp.pi / 3 + 0.5, jnp.pi / 4])
+
+    v_exact = self.log_meridian_exact(p, q)
+    v_ode = logarithmic_map_ode(p, q, self.metric_fn)
+
+    assert jnp.allclose(v_ode, v_exact, atol=1e-4), \
+      f"ODE: {v_ode}, Exact: {v_exact}"
+
+  def test_log_exp_roundtrip_sphere(self):
+    """Test that log_p(exp_p(v)) = v for sphere."""
+    p = jnp.array([jnp.pi / 2, 0.0])
+    v_arr = jnp.array([0.3, 0.0])
+
+    # Compute q = exp_p(v)
+    q = self.exp_meridian_exact(p, v_arr[0])
+
+    # Compute log_p(q)
+    v_recovered = logarithmic_map_ode(p, q, self.metric_fn)
+
+    assert jnp.allclose(v_arr, v_recovered, atol=1e-4), \
+      f"Original: {v_arr}, Recovered: {v_recovered}"
 
 
 class TestPoincareDisk:
@@ -799,3 +1118,297 @@ class TestPoincareDisk:
 
     assert jnp.allclose(q_ode, q_exact, atol=1e-6), \
       f"ODE: {q_ode}, Exact: {q_exact}"
+
+  # -------------------------------------------------------------------------
+  # Logarithmic map tests
+  # -------------------------------------------------------------------------
+
+  @staticmethod
+  def log_to_origin_exact(q: jnp.ndarray) -> jnp.ndarray:
+    """
+    Exact logarithmic map to the origin.
+
+    Inverse of exp_0(v) = tanh(|v|) * (v/|v|)
+    log_0(q) = arctanh(|q|) * (q/|q|)
+    """
+    norm_q = jnp.linalg.norm(q)
+    safe_norm = jnp.where(norm_q > 1e-10, norm_q, 1.0)
+    direction = q / safe_norm
+    scale = jnp.arctanh(jnp.clip(norm_q, 0.0, 0.999))
+    return jnp.where(norm_q > 1e-10, scale * direction, jnp.zeros(2))
+
+  def test_log_from_origin_x_direction(self):
+    """Test logarithmic map to origin from point in x-direction."""
+    p = jnp.array([0.0, 0.0])
+    q = jnp.array([0.4, 0.0])  # Point in x-direction
+
+    v_exact = self.log_to_origin_exact(q)
+    v_ode = logarithmic_map_ode(p, q, self.metric_fn)
+
+    assert jnp.allclose(v_ode, v_exact, atol=1e-3), \
+      f"ODE: {v_ode}, Exact: {v_exact}"
+
+  def test_log_from_origin_y_direction(self):
+    """Test logarithmic map to origin from point in y-direction."""
+    p = jnp.array([0.0, 0.0])
+    q = jnp.array([0.0, 0.3])
+
+    v_exact = self.log_to_origin_exact(q)
+    v_ode = logarithmic_map_ode(p, q, self.metric_fn)
+
+    assert jnp.allclose(v_ode, v_exact, atol=1e-3), \
+      f"ODE: {v_ode}, Exact: {v_exact}"
+
+  def test_log_from_origin_diagonal(self):
+    """Test logarithmic map to origin from diagonal point."""
+    p = jnp.array([0.0, 0.0])
+    q = jnp.array([0.2, 0.2])
+
+    v_exact = self.log_to_origin_exact(q)
+    v_ode = logarithmic_map_ode(p, q, self.metric_fn)
+
+    assert jnp.allclose(v_ode, v_exact, atol=1e-3), \
+      f"ODE: {v_ode}, Exact: {v_exact}"
+
+  def test_log_exp_roundtrip_poincare(self):
+    """Test that log_0(exp_0(v)) = v for Poincaré disk."""
+    p = jnp.array([0.0, 0.0])
+    v_arr = jnp.array([0.3, 0.2])
+
+    # Compute q = exp_p(v)
+    q = self.exp_from_origin_exact(v_arr)
+
+    # Compute log_p(q)
+    v_recovered = logarithmic_map_ode(p, q, self.metric_fn)
+
+    assert jnp.allclose(v_arr, v_recovered, atol=1e-3), \
+      f"Original: {v_arr}, Recovered: {v_recovered}"
+
+  def test_log_from_origin_various_points(self):
+    """Test logarithmic map from origin to various points."""
+    p = jnp.array([0.0, 0.0])
+    test_cases = [
+      jnp.array([0.3, 0.0]),
+      jnp.array([0.0, 0.4]),
+      jnp.array([0.2, 0.1]),
+      jnp.array([-0.3, 0.2]),
+    ]
+
+    for q in test_cases:
+      v_exact = self.log_to_origin_exact(q)
+      v_ode = logarithmic_map_ode(p, q, self.metric_fn)
+
+      assert jnp.allclose(v_ode, v_exact, atol=1e-3), \
+        f"Failed at q={q}: ODE={v_ode}, Exact={v_exact}"
+
+
+# =============================================================================
+# Tests for logarithmic_map_taylor_refined (second-order discretization)
+# =============================================================================
+
+from local_coordinates.exponential_map import logarithmic_map_taylor_refined
+
+
+class TestLogarithmicMapTaylorRefined:
+  """Tests for the Newton-Taylor refined logarithmic map."""
+
+  def test_refined_equals_taylor_for_small_displacement(self):
+    """For very small displacements, refined should equal Taylor."""
+    p = jnp.array([0.5, 0.5])
+    epsilon = 0.1
+    metric = create_nearly_flat_metric(p, epsilon=epsilon)
+
+    # Very small displacement
+    q = p + jnp.array([0.001, 0.001])
+
+    v_taylor = logarithmic_map_taylor(metric, q)
+    v_refined = logarithmic_map_taylor_refined(metric, q, n_corrections=1)
+
+    # Should be nearly identical for small displacements
+    assert jnp.allclose(v_taylor, v_refined, atol=1e-8), \
+      f"Taylor: {v_taylor}, Refined: {v_refined}"
+
+  def test_refined_euclidean_equals_taylor(self):
+    """For Euclidean metric, all methods should give same result."""
+    p = jnp.array([1.0, 2.0])
+    metric = create_euclidean_metric(p)
+
+    q = jnp.array([1.5, 2.3])
+
+    v_taylor = logarithmic_map_taylor(metric, q)
+    v_refined = logarithmic_map_taylor_refined(metric, q, n_corrections=1)
+
+    # For Euclidean, both should equal q - p
+    expected = q - p
+    assert jnp.allclose(v_taylor, expected, atol=1e-6)
+    assert jnp.allclose(v_refined, expected, atol=1e-6)
+
+  def test_refined_roundtrip(self):
+    """Test that exp(log_refined(q)) ≈ q."""
+    p = jnp.array([0.5, 0.5])
+    epsilon = 0.1
+    metric = create_nearly_flat_metric(p, epsilon=epsilon)
+
+    # Moderate displacement
+    q = jnp.array([0.6, 0.55])
+
+    v_refined = logarithmic_map_taylor_refined(metric, q, n_corrections=1)
+
+    # Roundtrip using Taylor exponential
+    _, J_v_to_x = get_rnc_jacobians(metric)
+    v_std = J_v_to_x.value @ v_refined
+    v_tan = create_tangent_vector(p, v_std)
+    q_recovered = exponential_map_taylor(metric, v_tan)
+
+    assert jnp.allclose(q_recovered, q, atol=1e-6), \
+      f"Original: {q}, Recovered: {q_recovered}"
+
+  def test_refined_more_accurate_than_taylor(self):
+    """Refined should be more accurate than Taylor for larger displacements."""
+    p = jnp.array([0.3, 0.3])
+    epsilon = 0.3  # Stronger curvature
+    metric = create_nearly_flat_metric(p, epsilon=epsilon)
+    metric_fn = _nearly_flat_metric_fn(epsilon=epsilon)
+
+    # Larger displacement where Taylor error becomes noticeable
+    q = jnp.array([0.5, 0.45])
+
+    # Get all three estimates
+    v_taylor = logarithmic_map_taylor(metric, q)
+    v_refined = logarithmic_map_taylor_refined(metric, q, n_corrections=1)
+    v_ode = logarithmic_map_ode(p, q, metric_fn)
+
+    # Roundtrip errors
+    # Taylor
+    _, J_v_to_x = get_rnc_jacobians(metric)
+    v_taylor_std = J_v_to_x.value @ v_taylor
+    v_taylor_tan = create_tangent_vector(p, v_taylor_std)
+    q_taylor = exponential_map_taylor(metric, v_taylor_tan)
+    err_taylor = jnp.linalg.norm(q_taylor - q)
+
+    # Refined
+    v_refined_std = J_v_to_x.value @ v_refined
+    v_refined_tan = create_tangent_vector(p, v_refined_std)
+    q_refined = exponential_map_taylor(metric, v_refined_tan)
+    err_refined = jnp.linalg.norm(q_refined - q)
+
+    # ODE (ground truth)
+    v_ode_tan = create_tangent_vector(p, v_ode)
+    q_ode = exponential_map_ode(v_ode_tan, metric_fn)
+    err_ode = jnp.linalg.norm(q_ode - q)
+
+    # Refined should be at least as good as Taylor and close to ODE
+    assert err_refined <= err_taylor + 1e-10, \
+      f"Refined error ({err_refined}) should be <= Taylor error ({err_taylor})"
+
+  def test_refined_multiple_corrections(self):
+    """More corrections should improve accuracy."""
+    p = jnp.array([0.3, 0.3])
+    epsilon = 0.2
+    metric = create_nearly_flat_metric(p, epsilon=epsilon)
+
+    q = jnp.array([0.45, 0.4])
+
+    v_1 = logarithmic_map_taylor_refined(metric, q, n_corrections=1)
+    v_2 = logarithmic_map_taylor_refined(metric, q, n_corrections=2)
+
+    # Roundtrip errors
+    _, J_v_to_x = get_rnc_jacobians(metric)
+
+    v_1_std = J_v_to_x.value @ v_1
+    v_1_tan = create_tangent_vector(p, v_1_std)
+    q_1 = exponential_map_taylor(metric, v_1_tan)
+    err_1 = jnp.linalg.norm(q_1 - q)
+
+    v_2_std = J_v_to_x.value @ v_2
+    v_2_tan = create_tangent_vector(p, v_2_std)
+    q_2 = exponential_map_taylor(metric, v_2_tan)
+    err_2 = jnp.linalg.norm(q_2 - q)
+
+    # Two corrections should be at least as good as one
+    assert err_2 <= err_1 + 1e-10, \
+      f"2 corrections error ({err_2}) should be <= 1 correction error ({err_1})"
+
+  def test_refined_jit_compatible(self):
+    """Refined function should be JIT-compatible."""
+    p = jnp.array([0.5, 0.5])
+    metric = create_nearly_flat_metric(p, epsilon=0.1)
+
+    q = jnp.array([0.55, 0.52])
+
+    # JIT compile the function
+    jitted_fn = jax.jit(lambda q_: logarithmic_map_taylor_refined(metric, q_, n_corrections=1))
+
+    # Should work without errors
+    v_refined = jitted_fn(q)
+    v_refined_2 = jitted_fn(q)  # Second call to ensure caching works
+
+    assert jnp.allclose(v_refined, v_refined_2)
+
+  def test_refined_3d(self):
+    """Test refined logarithmic map in 3D."""
+    p = jnp.array([0.5, 0.5, 0.5])
+    epsilon = 0.1
+
+    # Create 3D nearly flat metric
+    dim = 3
+    g_val = jnp.eye(dim) + epsilon * jnp.outer(p, p)
+    g_grad = jnp.zeros((dim, dim, dim))
+    for k in range(dim):
+      for i in range(dim):
+        for j in range(dim):
+          g_grad = g_grad.at[i, j, k].set(
+            epsilon * ((i == k) * p[j] + p[i] * (j == k))
+          )
+    g_hess = jnp.zeros((dim, dim, dim, dim))
+    for k in range(dim):
+      for l in range(dim):
+        for i in range(dim):
+          for j in range(dim):
+            g_hess = g_hess.at[i, j, k, l].set(
+              epsilon * ((i == k) * (j == l) + (i == l) * (j == k))
+            )
+
+    basis = get_standard_basis(p)
+    components = Jet(value=g_val, gradient=g_grad, hessian=g_hess)
+    metric = RiemannianMetric(basis=basis, components=components)
+
+    q = jnp.array([0.55, 0.52, 0.48])
+
+    v_taylor = logarithmic_map_taylor(metric, q)
+    v_refined = logarithmic_map_taylor_refined(metric, q, n_corrections=1)
+
+    # Both should give reasonable results
+    assert v_taylor.shape == (3,)
+    assert v_refined.shape == (3,)
+
+    # Refined roundtrip should be more accurate
+    _, J_v_to_x = get_rnc_jacobians(metric)
+    v_refined_std = J_v_to_x.value @ v_refined
+    v_refined_tan = create_tangent_vector(p, v_refined_std)
+    q_refined = exponential_map_taylor(metric, v_refined_tan)
+
+    assert jnp.allclose(q_refined, q, atol=1e-5), \
+      f"Original: {q}, Recovered: {q_refined}"
+
+  def test_refined_with_precomputed_jacobians(self):
+    """Test that precomputed Jacobians work correctly."""
+    p = jnp.array([0.5, 0.5])
+    metric = create_nearly_flat_metric(p, epsilon=0.1)
+
+    q = jnp.array([0.55, 0.52])
+
+    # Precompute Jacobians
+    J_x_to_v, J_v_to_x = get_rnc_jacobians(metric)
+
+    # With precomputed
+    v_with_precomputed = logarithmic_map_taylor_refined(
+      metric, q, n_corrections=1, J_x_to_v=J_x_to_v, J_v_to_x=J_v_to_x
+    )
+
+    # Without precomputed
+    v_without_precomputed = logarithmic_map_taylor_refined(
+      metric, q, n_corrections=1
+    )
+
+    assert jnp.allclose(v_with_precomputed, v_without_precomputed, atol=1e-10)
