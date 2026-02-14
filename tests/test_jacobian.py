@@ -286,3 +286,100 @@ def test_compose_inverse_is_identity():
     f"Gradient not zero:\n{J_id.gradient}"
   assert jnp.allclose(J_id.hessian, jnp.zeros((dim, dim, dim, dim)), atol=atol), \
     f"Hessian not zero:\n{J_id.hessian}"
+
+
+def test_jacobian_call_zero_order():
+  """0th order __call__ returns value regardless of dx."""
+  dim = 2
+  A = jnp.array([[1.0, 0.5], [0.2, 1.5]])
+  J = Jacobian(value=A, gradient=None, hessian=None)
+
+  assert jnp.allclose(J(jnp.zeros(dim)), J.value, atol=1e-6)
+  assert jnp.allclose(J(jnp.array([0.1, -0.2])), J.value, atol=1e-6)
+  key = jax.random.PRNGKey(0)
+  dx_random = jax.random.normal(key, (dim,))
+  assert jnp.allclose(J(dx_random), J.value, atol=1e-6)
+
+
+def test_jacobian_call_first_order_at_zero():
+  """1st order __call__ at dx=0 returns value (linear term vanishes)."""
+  dim = 2
+  A = jnp.array([[1.0, 0.5], [0.2, 1.5]])
+  B = jnp.ones((dim, dim, dim))  # nonzero gradient
+  J = Jacobian(value=A, gradient=B, hessian=None)
+
+  result = J(jnp.zeros(dim))
+  assert jnp.allclose(result, J.value, atol=1e-6)
+
+
+def test_jacobian_call_first_order_linear_term():
+  """1st order __call__ approximates true Jacobian for small dx."""
+  def f(x):
+    return jnp.array([x[0]**2 + x[1], x[0] + x[1]**2])
+
+  x0 = jnp.array([0.5, 0.7])
+  J_full = function_to_jacobian(f, x0)
+  J = Jacobian(value=J_full.value, gradient=J_full.gradient, hessian=None)
+
+  dx = jnp.array([0.01, 0.02])
+  approx = J(dx)
+  true_jac = jax.jacrev(f)(x0 + dx)
+
+  assert jnp.allclose(approx, true_jac, atol=1e-4, rtol=1e-3)
+
+
+def test_jacobian_call_second_order_at_zero():
+  """2nd order __call__ at dx=0 returns value (quadratic term vanishes)."""
+  def f(x):
+    return jnp.array([x[0]**2 + x[1], x[0] + x[1]**2])
+
+  x0 = jnp.array([0.5, 0.7])
+  J = function_to_jacobian(f, x0)
+
+  result = J(jnp.zeros(2))
+  assert jnp.allclose(result, J.value, atol=1e-6)
+
+
+def test_jacobian_call_second_order_approximation():
+  """2nd order __call__ is closer to true Jacobian than 1st order for same dx."""
+  def f(x):
+    return jnp.array([
+      x[0]**2 + jnp.sin(x[1]),
+      x[0] * x[1] + x[1]**2
+    ])
+
+  x0 = jnp.array([0.5, 0.7])
+  J_full = function_to_jacobian(f, x0)
+  J_first = Jacobian(value=J_full.value, gradient=J_full.gradient, hessian=None)
+
+  dx = jnp.array([0.05, 0.05])
+  true_jac = jax.jacrev(f)(x0 + dx)
+
+  approx_first = J_first(dx)
+  approx_second = J_full(dx)
+
+  err_first = jnp.max(jnp.abs(approx_first - true_jac))
+  err_second = jnp.max(jnp.abs(approx_second - true_jac))
+
+  assert err_second < err_first
+
+
+def test_jacobian_call_invalid_dx_raises():
+  """__call__ raises ValueError when dx is not 1D."""
+  dim = 2
+  A = jnp.eye(dim)
+  J = Jacobian(value=A, gradient=None, hessian=None)
+
+  with pytest.raises(ValueError, match="dx must be a 1D array"):
+    J(jnp.zeros((dim, dim)))
+
+
+def test_jacobian_call_dimension_mismatch():
+  """__call__ with dx of wrong length raises (einsum shape mismatch)."""
+  dim = 3
+  A = jnp.eye(dim)
+  B = jnp.zeros((dim, dim, dim))
+  J = Jacobian(value=A, gradient=B, hessian=None)
+
+  with pytest.raises((ValueError, TypeError)):
+    J(jnp.zeros(2))

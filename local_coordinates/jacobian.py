@@ -121,6 +121,44 @@ class Jacobian(AbstractBatchableObject):
       hessian=hess_inv,
     )
 
+  def __call__(self, dx: Any):
+    """
+    Evaluate the Taylor approximation at displacement dx from the Jacobian's base point.
+
+    - dx must be a 1D array of shape (dim,), where dim matches the trailing
+      axis of the gradient.
+    - The order of the approximation depends on which derivatives are available:
+      - 0th order (value only) if gradient is None.
+      - 1st order (linear) if gradient is present but hessian is None.
+      - 2nd order (quadratic) if gradient and hessian are present.
+    - Returns a PyTree with the same structure/shapes as `self.value`.
+    """
+    dx = jnp.asarray(dx)
+    if dx.ndim != 1:
+      raise ValueError("dx must be a 1D array of shape (dim,)")
+
+    # 0th-order approximation: return value if no derivatives are available.
+    if self.gradient is None:
+      return self.value
+
+    # 1st-order approximation: v + <g, dx>
+    linear_approx = jtu.tree_map(
+        lambda v, g: v + jnp.einsum('...r,r->...', g, dx),
+        self.value,
+        self.gradient,
+    )
+
+    if self.hessian is None:
+      return linear_approx
+
+    # 2nd-order approximation: add quadratic term: + 1/2 dx^T H dx
+    def quad_term(h):
+      return 0.5 * jnp.einsum('r,...rs,s->...', dx, h, dx)
+
+    quadratic_correction = jtu.tree_map(quad_term, self.hessian)
+
+    return jtu.tree_map(jnp.add, linear_approx, quadratic_correction)
+
 
 def compose(J1: Jacobian, J2: Jacobian) -> Jacobian:
   """
