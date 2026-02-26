@@ -609,3 +609,93 @@ def test_compare_pullback_metric_computations():
   expected_g_val = G_jac.T @ h_standard @ G_jac
 
   assert jnp.allclose(g.components.value, expected_g_val)
+
+
+# ============================================================================
+# Tests for pullback_metric with non-dimension-preserving maps
+# ============================================================================
+
+def test_pullback_metric_dimension_reducing_projection():
+  """
+  Pullback of Euclidean metric on R^2 under projection R^3 -> R^2.
+  The Jacobian is [[1,0,0],[0,1,0]], so the pullback is diag(1,1,0).
+  """
+  def project(x):
+    return x[:2]
+
+  x = jnp.array([1.0, 2.0, 3.0])
+  y = project(x)
+
+  h = RiemannianMetric(
+    basis=get_standard_basis(y),
+    components=Jet(
+      value=jnp.eye(2),
+      gradient=jnp.zeros((2, 2, 2)),
+      hessian=jnp.zeros((2, 2, 2, 2)),
+    ),
+  )
+
+  g = pullback_metric(x, project, h)
+
+  J = jnp.array([[1., 0., 0.], [0., 1., 0.]])
+  expected = J.T @ J
+  assert g.components.value.shape == (3, 3)
+  assert jnp.allclose(g.components.value, expected)
+
+
+def test_pullback_metric_dimension_expanding_embedding():
+  """
+  Pullback of Euclidean metric on R^3 under a paraboloid embedding R^2 -> R^3.
+  f(x) = (x0, x1, x0^2 + x1^2).  At x = (1, 0) the Jacobian is
+  [[1,0],[0,1],[2,0]] so the pullback is [[5,0],[0,1]].
+  """
+  def embed(x):
+    return jnp.array([x[0], x[1], x[0]**2 + x[1]**2])
+
+  x = jnp.array([1.0, 0.0])
+  y = embed(x)
+
+  h = RiemannianMetric(
+    basis=get_standard_basis(y),
+    components=Jet(
+      value=jnp.eye(3),
+      gradient=jnp.zeros((3, 3, 3)),
+      hessian=jnp.zeros((3, 3, 3, 3)),
+    ),
+  )
+
+  g = pullback_metric(x, embed, h)
+
+  J = jnp.array([[1., 0.], [0., 1.], [2., 0.]])
+  expected = J.T @ J
+  assert g.components.value.shape == (2, 2)
+  assert jnp.allclose(g.components.value, expected)
+
+
+def test_pullback_metric_dimension_reducing_linear():
+  """
+  Pullback of identity metric under a general linear map R^3 -> R^2.
+  g = A^T A.
+  """
+  A = jnp.array([[1., 0., 1.], [0., 1., -1.]])
+
+  def f(x):
+    return A @ x
+
+  x = jnp.array([1.0, 2.0, 3.0])
+  y = f(x)
+
+  h = RiemannianMetric(
+    basis=get_standard_basis(y),
+    components=Jet(
+      value=jnp.eye(2),
+      gradient=jnp.zeros((2, 2, 2)),
+      hessian=jnp.zeros((2, 2, 2, 2)),
+    ),
+  )
+
+  g = pullback_metric(x, f, h)
+
+  expected = A.T @ A
+  assert g.components.value.shape == (3, 3)
+  assert jnp.allclose(g.components.value, expected)

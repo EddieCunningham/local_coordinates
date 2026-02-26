@@ -199,6 +199,38 @@ def get_euclidean_metric(p: Array) -> RiemannianMetric:
     components=get_identity_jet(p.shape[0])
   )
 
+def _compose_jet_with_jacobian(jet: Jet, jacobian) -> Jet:
+  """Re-express a Jet's coordinate derivatives through a (possibly non-square) Jacobian.
+
+  Given J[g]_y (a Jet with derivatives w.r.t. y-coordinates) and the Jacobian
+  of a map f with y = f(x), return J[g circ f]_x (a Jet with derivatives
+  w.r.t. x-coordinates) via the multivariate chain rule.
+
+  The Jacobian need not be square, so this works for maps f: M -> N where
+  dim(M) != dim(N).
+  """
+  g_val = jet.value
+  g_grad = jet.gradient
+  g_hess = jet.hessian
+
+  J = jacobian.value
+  H = jacobian.gradient
+
+  if g_grad is None:
+    return Jet(value=g_val, gradient=None, hessian=None)
+
+  composed_grad = jnp.einsum("...c,ck->...k", g_grad, J)
+
+  if g_hess is None:
+    return Jet(value=g_val, gradient=composed_grad, hessian=None)
+
+  composed_hess = jnp.einsum("...cd,ck,dl->...kl", g_hess, J, J)
+  if H is not None:
+    composed_hess = composed_hess + jnp.einsum("...c,ckl->...kl", g_grad, H)
+
+  return Jet(value=g_val, gradient=composed_grad, hessian=composed_hess)
+
+
 def pullback_metric(
   x: Array,
   f: Callable[[Array], Array],
@@ -209,6 +241,9 @@ def pullback_metric(
 
   The pullback metric g_f = f^* g is defined by
     (g_f)_ij(x) = (df^a/dx^i) g_ab(f(x)) (df^b/dx^j)
+
+  The map f need not be dimension-preserving. When dim(M) != dim(N) the
+  Jacobian df is rectangular and the resulting metric lives on M.
 
   Args:
     x: The point at which to evaluate the pullback metric.
@@ -225,10 +260,14 @@ def pullback_metric(
   G_jac = function_to_jacobian(f, x)
   G = Jet(value=G_jac.value, gradient=G_jac.gradient, hessian=G_jac.hessian)
 
+  # Compose g's N-coordinate derivatives with the Jacobian of f so that both
+  # G and g_composed carry M-coordinate derivatives (required by jet_decorator).
+  g_composed = _compose_jet_with_jacobian(g.components, G_jac)
+
   @jet_decorator
   def compute_pullback(G_val, g_val):
     return jnp.einsum("ai,bj,ab->ij", G_val, G_val, g_val)
-  gf_components: Jet = compute_pullback(G, g.components)
+  gf_components: Jet = compute_pullback(G, g_composed)
 
   standard_basis = get_standard_basis(x)
   return RiemannianMetric(basis=standard_basis, components=gf_components)

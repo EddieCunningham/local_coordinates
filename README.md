@@ -137,14 +137,6 @@ The library uses the column-vector convention throughout:
 - Riemann tensor: `R[i, j, k, m]` = R^m\_ijk
 - Tensors use 1-based indexing for raise/lower operations
 
-## Known Limitations
-
-1. **Dimension constraints in pullback_metric**: The `pullback_metric` function requires source and target spaces to have the same dimension. Mappings between different-dimensional spaces require manual handling.
-
-2. **Jet coordinate dimension consistency**: The `@jet_decorator` expects all Jet inputs to have consistent coordinate dimensions. When composing operations involving Jets from different coordinate systems, ensure dimensions match or use explicit Jacobian transformations.
-
-3. **ODE solver tuning**: The `exponential_map_ode` function may require tuning step sizes and tolerances for highly curved metrics. For local computations, `exponential_map_taylor` is faster and sufficient.
-
 ## License
 
 See [LICENSE](LICENSE) for details.

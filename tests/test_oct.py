@@ -719,6 +719,184 @@ class TestGeometricQuantitiesFromMetric:
                     f"R[{i},{j},{i},{j}] not zero: {R_component}"
 
 
+# =============================================================================
+# Comprehensive Invariant Tests
+# =============================================================================
+
+class TestOCTInvariants:
+    """
+    Comprehensive tests for the three fundamental invariants of orthogonal
+    coordinate systems produced by LocalOCT:
+
+    1. INTEGRABILITY: [E_i, E_j] = 0 (coordinate frame has vanishing Lie brackets)
+    2. ORTHOGONALITY: g_{ij} = s_i² δ_{ij} (metric is diagonal)
+    3. FLATNESS: R = 0 (Riemann curvature vanishes)
+
+    Each invariant is tested at the point (value level) and in a neighborhood
+    (gradient level) where applicable.
+    """
+
+    def test_integrability_at_point_and_neighborhood(self, random_oct):
+        """
+        INTEGRABILITY: The coordinate frame Lie bracket [E_i, E_j] should be zero.
+
+        This is the defining property of a coordinate basis: the basis vectors
+        commute because they are partial derivatives ∂/∂z^i.
+
+        Tests:
+          - Value: [E_i, E_j] = 0 at the basepoint
+          - Gradient: ∂[E_i, E_j]/∂x = 0 (first order in neighborhood)
+        """
+        E_frame = random_oct.get_coordinate_frame()
+        E_lb = get_lie_bracket_between_frame_pairs(E_frame)
+
+        # Value level: [E_i, E_j] = 0 at the point
+        max_lb_value = jnp.max(jnp.abs(E_lb.components.value))
+        assert max_lb_value < 1e-5, \
+            f"Integrability violated at point: max |[E_i, E_j]| = {max_lb_value}"
+
+        # Gradient level: ∂[E_i, E_j]/∂x = 0 in neighborhood
+        max_lb_grad = jnp.max(jnp.abs(E_lb.components.gradient))
+        assert max_lb_grad < 1e-4, \
+            f"Integrability violated in neighborhood: max |∂[E_i, E_j]/∂x| = {max_lb_grad}"
+
+    def test_orthogonality_at_point_and_neighborhood(self, random_oct):
+        """
+        ORTHOGONALITY: The metric g_{ij} = <E_i, E_j> should be diagonal.
+
+        For orthogonal coordinates: g_{ij} = s_i² δ_{ij}
+        The off-diagonal elements should be zero at the point AND remain zero
+        in a neighborhood (to first order).
+
+        Tests:
+          - Value: g_{ij} = 0 for i ≠ j at the point
+          - Gradient: ∂g_{ij}/∂x^k = 0 for i ≠ j (metric stays diagonal)
+        """
+        dim = random_oct.p.shape[0]
+        s = jnp.exp(random_oct.log_s)
+        E_frame = random_oct.get_coordinate_frame()
+
+        @jet_decorator
+        def compute_metric(E_val):
+            return E_val.T @ E_val
+
+        g_jet = compute_metric(E_frame.components)
+
+        # Create off-diagonal mask
+        off_diag_mask = ~jnp.eye(dim, dtype=bool)
+
+        # Value level: g_{ij} = s_i² δ_{ij}
+        expected_g = jnp.diag(s ** 2)
+        max_metric_error = jnp.max(jnp.abs(g_jet.value - expected_g))
+        assert max_metric_error < 1e-5, \
+            f"Orthogonality violated at point: max |g - diag(s²)| = {max_metric_error}"
+
+        # Off-diagonal should be zero
+        off_diag_values = g_jet.value[off_diag_mask]
+        max_off_diag = jnp.max(jnp.abs(off_diag_values))
+        assert max_off_diag < 1e-5, \
+            f"Off-diagonal metric non-zero at point: max |g_{{i≠j}}| = {max_off_diag}"
+
+        # Gradient level: ∂g_{ij}/∂x^k = 0 for i ≠ j (metric stays diagonal)
+        max_off_diag_grad = 0.0
+        for k in range(dim):
+            off_diag_grad = g_jet.gradient[:, :, k][off_diag_mask]
+            max_off_diag_grad = max(max_off_diag_grad, float(jnp.max(jnp.abs(off_diag_grad))))
+
+        assert max_off_diag_grad < 1e-4, \
+            f"Orthogonality violated in neighborhood: max |∂g_{{i≠j}}/∂x| = {max_off_diag_grad}"
+
+    def test_flatness_at_point(self, random_oct):
+        """
+        FLATNESS: The Riemann curvature tensor should be zero.
+
+        This is ensured by the Lamé equations, which are necessary and sufficient
+        conditions for an orthogonal coordinate system to exist in flat space.
+
+        Tests:
+          - Lamé equations satisfied (via flatness_loss)
+          - Riemann tensor R = 0 (computed via library)
+        """
+        from local_coordinates.riemann import get_riemann_curvature_tensor
+        from local_coordinates.connection import get_levi_civita_connection
+        from local_coordinates.basis import BasisVectors
+        from local_coordinates.metric import RiemannianMetric
+
+        # Test 1: Lamé equations satisfied
+        lame_loss = _flatness_loss(random_oct.beta, random_oct.dbeta)
+        assert lame_loss < 1e-5, \
+            f"Flatness violated (Lamé equations): loss = {lame_loss}"
+
+        # Test 2: Riemann tensor = 0
+        E_frame = random_oct.get_coordinate_frame()
+
+        @jet_decorator
+        def compute_metric(E_val):
+            return E_val.T @ E_val
+
+        g_components = compute_metric(E_frame.components)
+        E_basis = BasisVectors(p=random_oct.p, components=E_frame.components)
+        metric = RiemannianMetric(basis=E_basis, components=g_components)
+        connection = get_levi_civita_connection(metric)
+        R = get_riemann_curvature_tensor(connection)
+
+        max_R = jnp.max(jnp.abs(R.components.value))
+        assert max_R < 1e-4, \
+            f"Flatness violated (Riemann tensor): max |R| = {max_R}"
+
+    def test_all_invariants_summary(self, random_oct):
+        """
+        Summary test that checks all three invariants and reports results.
+
+        This test provides a comprehensive overview of the OCT's geometric
+        properties in a single test.
+        """
+        from local_coordinates.riemann import get_riemann_curvature_tensor
+        from local_coordinates.connection import get_levi_civita_connection
+        from local_coordinates.basis import BasisVectors
+        from local_coordinates.metric import RiemannianMetric
+
+        dim = random_oct.p.shape[0]
+        s = jnp.exp(random_oct.log_s)
+        E_frame = random_oct.get_coordinate_frame()
+
+        # Compute metric
+        @jet_decorator
+        def compute_metric(E_val):
+            return E_val.T @ E_val
+
+        g_jet = compute_metric(E_frame.components)
+
+        # 1. INTEGRABILITY
+        E_lb = get_lie_bracket_between_frame_pairs(E_frame)
+        integ_value = float(jnp.max(jnp.abs(E_lb.components.value)))
+        integ_grad = float(jnp.max(jnp.abs(E_lb.components.gradient)))
+
+        # 2. ORTHOGONALITY
+        off_diag_mask = ~jnp.eye(dim, dtype=bool)
+        ortho_value = float(jnp.max(jnp.abs(g_jet.value[off_diag_mask])))
+        ortho_grad = max(
+            float(jnp.max(jnp.abs(g_jet.gradient[:, :, k][off_diag_mask])))
+            for k in range(dim)
+        )
+
+        # 3. FLATNESS
+        flat_lame = float(_flatness_loss(random_oct.beta, random_oct.dbeta))
+        E_basis = BasisVectors(p=random_oct.p, components=E_frame.components)
+        metric = RiemannianMetric(basis=E_basis, components=g_jet)
+        connection = get_levi_civita_connection(metric)
+        R = get_riemann_curvature_tensor(connection)
+        flat_riemann = float(jnp.max(jnp.abs(R.components.value)))
+
+        # Assert all invariants hold
+        assert integ_value < 1e-5, f"Integrability (value): {integ_value}"
+        assert integ_grad < 1e-4, f"Integrability (gradient): {integ_grad}"
+        assert ortho_value < 1e-5, f"Orthogonality (value): {ortho_value}"
+        assert ortho_grad < 1e-4, f"Orthogonality (gradient): {ortho_grad}"
+        assert flat_lame < 1e-5, f"Flatness (Lamé): {flat_lame}"
+        assert flat_riemann < 1e-4, f"Flatness (Riemann): {flat_riemann}"
+
+
 class TestAdditionalThesisFormulas:
     """
     Tests for additional mathematical formulas from phd_content.tex that verify
