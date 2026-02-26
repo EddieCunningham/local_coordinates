@@ -5,7 +5,7 @@ import jax.tree_util as jtu
 from jax import random
 import equinox as eqx
 from jaxtyping import Array, Float, PRNGKeyArray
-from linsdex import AbstractBatchableObject
+from local_coordinates.base import AbstractBatchableObject
 from typing import Union
 
 

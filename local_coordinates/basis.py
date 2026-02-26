@@ -5,7 +5,7 @@ import jax.tree_util as jtu
 from jax import random
 import equinox as eqx
 from jaxtyping import Array, Float, PRNGKeyArray
-from linsdex import AbstractBatchableObject, auto_vmap
+from local_coordinates.base import AbstractBatchableObject, auto_vmap
 from functools import partial
 from plum import dispatch
 from local_coordinates.jet import Jet, jet_decorator, change_coordinates as change_coordinates_jet

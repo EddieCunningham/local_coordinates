@@ -6,7 +6,7 @@ import jax.tree_util as jtu
 from jax import random
 import equinox as eqx
 from jaxtyping import Array, Float, PRNGKeyArray, Scalar
-from linsdex import AbstractBatchableObject, auto_vmap
+from local_coordinates.base import AbstractBatchableObject, auto_vmap
 from plum import dispatch
 from functools import partial, wraps
 import inspect

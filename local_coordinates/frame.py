@@ -5,7 +5,7 @@ import jax.tree_util as jtu
 from jax import random
 import equinox as eqx
 from jaxtyping import Array, Float, PRNGKeyArray
-from linsdex import AbstractBatchableObject
+from local_coordinates.base import AbstractBatchableObject
 from plum import dispatch
 from local_coordinates.jet import Jet, jet_decorator
 from local_coordinates.basis import BasisVectors, get_basis_transform, get_standard_basis, apply_contravariant_transform, change_coordinates as change_coordinates_basis

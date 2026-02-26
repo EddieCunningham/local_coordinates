@@ -548,13 +548,12 @@ def test_pullback_metric_with_gradients():
 
   basis_n = get_standard_basis(p_n)
 
+  dim = 2
   h = RiemannianMetric(
     basis=basis_n,
-    components=Jet(value=jnp.eye(1), gradient=jnp.zeros((1, 1, 1)), hessian=jnp.zeros((1, 1, 1, 1)))
+    components=Jet(value=jnp.eye(dim), gradient=jnp.zeros((dim, dim, dim)), hessian=jnp.zeros((dim, dim, dim, dim)))
   )
 
-  # We want to differentiate w.r.t. theta.
-  # In our framework, we can wrap this in a function of theta.
   def get_pullback_value(theta):
     f = lambda x: f_param(x, theta)
     g = pullback_metric(p_m, f, h)
@@ -562,8 +561,8 @@ def test_pullback_metric_with_gradients():
 
   dg_dtheta = jax.jacobian(get_pullback_value)(theta_val)
 
-  # Expected dg/dtheta = 2 * theta * I = 2 * 2.0 * 1.0 = 4.0
-  assert jnp.allclose(dg_dtheta, jnp.array([[4.0]]))
+  # dg/dtheta = 2 * theta * I_2 = 4.0 * I_2
+  assert jnp.allclose(dg_dtheta, 4.0 * jnp.eye(dim))
 
 def test_compare_pullback_metric_computations():
   """
