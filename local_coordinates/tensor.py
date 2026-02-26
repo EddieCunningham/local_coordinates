@@ -102,6 +102,23 @@ class Tensor(AbstractBatchableObject):
     new_components = add_components(t_comps_val, other_comps_val)
     return Tensor(tensor_type=self.tensor_type, basis=self.basis, components=new_components)
 
+  def __neg__(self) -> 'Tensor':
+    return Tensor(
+      tensor_type=self.tensor_type,
+      basis=self.basis,
+      components=-self.components,
+    )
+
+  def __sub__(self, other: 'Tensor') -> 'Tensor':
+    return self + (-other)
+
+  def __rmul__(self, scalar) -> 'Tensor':
+    return Tensor(
+      tensor_type=self.tensor_type,
+      basis=self.basis,
+      components=jnp.asarray(scalar) * self.components,
+    )
+
 def function_multiply_tensor(T: Tensor, f: Jet) -> Tensor:
   @jet_decorator
   def multiply_components(t_component_values, f_values):
