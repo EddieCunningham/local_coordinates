@@ -26,25 +26,19 @@ The `local_coordinates` library provides a type-safe, coordinate-aware system fo
 
 ## Installation
 
-### Using uv (recommended)
-
 ```bash
-uv sync
+pip install localgeom
 ```
 
-### Using pip
+For development, clone the repo and install in editable mode:
 
 ```bash
-pip install -e .
+git clone https://github.com/EddieCunningham/local_coordinates.git
+cd local_coordinates
+pip install -e ".[test]"
 ```
 
-### Requirements
-
-- Python 3.12+
-- JAX and jaxlib
-- Equinox
-- jaxtyping
-- diffrax (for ODE-based geodesic computation)
+Requires Python 3.12+.
 
 ## Quick Start
 
