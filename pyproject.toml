@@ -1,9 +1,21 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
 [project]
-name = "local-coordinates"
+name = "localgeom"
 version = "0.1.0"
 description = "A JAX-based framework for differential geometry computations on Riemannian manifolds"
 readme = "README.md"
+license = "Apache-2.0"
 requires-python = ">=3.12"
+authors = [{ name = "EddieCunningham", email = "edmondcunnin@umass.edu" }]
+keywords = ["jax", "differential-geometry", "riemannian", "manifold", "curvature", "geodesic"]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "Topic :: Scientific/Engineering :: Mathematics",
+  "Topic :: Scientific/Engineering :: Physics",
+]
 dependencies = [
     "jax>=0.4.20",
     "jaxlib>=0.4.20",
@@ -19,6 +31,10 @@ dependencies = [
 test = [
     "pytest>=8.3.5",
 ]
+
+[project.urls]
+Homepage = "https://github.com/EddieCunningham/local_coordinates"
+Repository = "https://github.com/EddieCunningham/local_coordinates"
 
 [tool.setuptools.packages.find]
 include = ["local_coordinates*"]
