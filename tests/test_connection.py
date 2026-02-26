@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 from jaxtyping import Array
 from local_coordinates.basis import BasisVectors, get_standard_basis, change_basis
-from local_coordinates.connection import Connection, get_levi_civita_connection, change_coordinates
+from local_coordinates.connection import Connection, get_levi_civita_connection, get_covariant_hessian, change_coordinates
 from local_coordinates.jet import Jet, function_to_jet, jet_decorator
 from local_coordinates.metric import RiemannianMetric
 from local_coordinates.tensor import Tensor, TensorType
@@ -620,6 +620,63 @@ def test_levi_civita_connection_is_metric_compatible():
     assert jnp.allclose(comp.value, 0.0)
     assert jnp.allclose(comp.gradient, 0.0)
     # assert jnp.allclose(comp.hessian, 0.0) # Don't have enough information to check hessian
+
+def test_get_covariant_hessian_flat_connection_matches_standard_hessian():
+  p = jnp.array([0.1, -0.3])
+  basis = get_standard_basis(p)
+  gamma = Jet(value=jnp.zeros((2, 2, 2)), gradient=jnp.zeros((2, 2, 2, 2)), hessian=jnp.zeros((2, 2, 2, 2, 2)))
+  connection = Connection(basis=basis, christoffel_symbols=gamma)
+
+  def f(x):
+    return x[0] * x[0] + x[0] * x[1] + 3.0 * x[1] * x[1]
+
+  hessian = get_covariant_hessian(connection, f)
+  expected = jnp.array([[2.0, 1.0], [1.0, 6.0]])
+  assert hessian.tensor_type == TensorType(k=2, l=0)
+  assert jnp.allclose(hessian.components.value, expected, atol=1e-6)
+
+
+def test_get_covariant_hessian_is_symmetric_for_levi_civita_connection():
+  key = random.PRNGKey(123)
+  dim = 4
+  metric = create_random_metric(key, dim)
+  connection = get_levi_civita_connection(metric)
+
+  def f(x):
+    return jnp.sum(jnp.sin(x) + x * x * x)
+
+  hessian = get_covariant_hessian(connection, f)
+  assert jnp.allclose(hessian.components.value, hessian.components.value.T, atol=1e-6)
+
+
+def test_get_covariant_hessian_matches_definition():
+  key = random.PRNGKey(321)
+  dim = 4
+  metric = create_random_metric(key, dim)
+  connection = get_levi_civita_connection(metric)
+
+  k1, k2 = random.split(key)
+  X = change_basis(create_random_vector_field(k1, dim), metric.basis)
+  Y = change_basis(create_random_vector_field(k2, dim), metric.basis)
+
+  def f(x):
+    return jnp.sum(jnp.sin(x) + 0.5 * x * x + x * x * x)
+
+  f_jet = function_to_jet(f, metric.basis.p)
+  hessian = get_covariant_hessian(connection, f)
+
+  @jet_decorator
+  def contract_hessian(hess_val, x_val, y_val):
+    return jnp.einsum("ij,i,j->", hess_val, x_val, y_val)
+
+  lhs = contract_hessian(
+    hessian.components.get_value_jet(),
+    X.components.get_value_jet(),
+    Y.components.get_value_jet(),
+  )
+
+  rhs = X(Y(f_jet)) - connection.covariant_derivative(X, Y)(f_jet)
+  assert jnp.allclose(lhs.value, rhs.value, atol=1e-5)
 
 def test_covariant_hessian():
     key = random.PRNGKey(0)

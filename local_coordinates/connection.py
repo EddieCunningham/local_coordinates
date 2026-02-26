@@ -8,8 +8,8 @@ from jaxtyping import Array, Float, PRNGKeyArray
 from linsdex import AbstractBatchableObject
 from local_coordinates.basis import BasisVectors, get_basis_transform, get_standard_basis, change_coordinates as change_coordinates_basis
 from plum import dispatch
-from local_coordinates.tensor import Tensor, change_basis
-from local_coordinates.jet import Jet, jet_decorator, change_coordinates as change_coordinates_jet
+from local_coordinates.tensor import Tensor, TensorType, change_basis
+from local_coordinates.jet import Jet, jet_decorator, function_to_jet, change_coordinates as change_coordinates_jet
 from local_coordinates.metric import RiemannianMetric
 from local_coordinates.jet import get_identity_jet
 from local_coordinates.frame import Frame, get_lie_bracket_between_frame_pairs, basis_to_frame
@@ -169,3 +169,33 @@ def get_levi_civita_connection(metric: RiemannianMetric) -> Connection:
 
   christoffel_symbols: Jet = get_christoffel_symbols(E_val, g_val, g_grad, c_val)
   return Connection(basis=basis, christoffel_symbols=christoffel_symbols)
+
+def get_covariant_hessian(
+  connection: Connection,
+  f: Callable[[Array], Array],
+) -> Tensor:
+  """
+  Get the covariant Hessian of a function f with respect to the connection.
+  """
+  basis = connection.basis
+  f_jet = function_to_jet(f, basis.p)
+
+  @jet_decorator
+  def get_components(E_val, E_grad, gamma_val, f_grad, f_hess) -> Array:
+    term1 = jnp.einsum("ci,aj,...ca->...ij", E_val, E_val, f_hess)
+    term2 = jnp.einsum("ci,ajc,...a->...ij", E_val, E_grad, f_grad)
+    term3 = -jnp.einsum("ijk,ak,...a->...ij", gamma_val, E_val, f_grad)
+    return term1 + term2 + term3
+
+  E_val = basis.components.get_value_jet()
+  E_grad = basis.components.get_gradient_jet()
+  gamma_val = connection.christoffel_symbols.get_value_jet()
+  f_grad = f_jet.get_gradient_jet()
+  f_hess = f_jet.get_hessian_jet()
+
+  components = get_components(E_val, E_grad, gamma_val, f_grad, f_hess)
+  return Tensor(
+    tensor_type=TensorType(k=2, l=0),
+    basis=basis,
+    components=components,
+  )
