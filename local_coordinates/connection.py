@@ -1,4 +1,4 @@
-from typing import Any, Callable, Tuple, Annotated, Optional, List
+from typing import Any, Callable, Tuple, Annotated, Optional, List, Union
 import jax
 import jax.numpy as jnp
 import jax.tree_util as jtu
@@ -172,13 +172,19 @@ def get_levi_civita_connection(metric: RiemannianMetric) -> Connection:
 
 def get_covariant_hessian(
   connection: Connection,
-  f: Callable[[Array], Array],
+  f: Union[Callable[[Array], Array], Jet],
 ) -> Tensor:
   """
-  Get the covariant Hessian of a function f with respect to the connection.
+  Get the covariant Hessian of a scalar field with respect to the connection.
+
+  f can be either a callable f(x) -> scalar, or a pre-computed Jet of
+  the scalar field at connection.basis.p.
   """
   basis = connection.basis
-  f_jet = function_to_jet(f, basis.p)
+  if isinstance(f, Jet):
+    f_jet = f
+  else:
+    f_jet = function_to_jet(f, basis.p)
 
   @jet_decorator
   def get_components(E_val, E_grad, gamma_val, f_grad, f_hess) -> Array:

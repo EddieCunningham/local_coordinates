@@ -424,7 +424,7 @@ def _flatness_loss(beta: Float[Array, "N N"], dbeta: Float[Array, "N N N"]) -> F
   The Lamé equations are necessary conditions for an orthogonal coordinate system
   to exist in flat space. This function computes the sum of squared residuals:
 
-  1. First Lamé equation (for k ≠ i and k ≠ j):
+  1. First Lamé equation (for k ≠ i, k ≠ j, AND i ≠ j):
      U_k(β_ij) = β_ik β_kj - β_ij β_kj
      Residual: dbeta[i,j,k] - (beta[i,k]*beta[k,j] - beta[i,j]*beta[k,j])
 
@@ -443,7 +443,7 @@ def _flatness_loss(beta: Float[Array, "N N"], dbeta: Float[Array, "N N N"]) -> F
   n = beta.shape[0]
 
   # === First Lamé equation (vectorized) ===
-  # For all (i, j, k) with k ≠ i and k ≠ j:
+  # For all (i, j, k) with k ≠ i, k ≠ j, AND i ≠ j:
   # dbeta[i,j,k] = beta[i,k]*beta[k,j] - beta[i,j]*beta[k,j]
 
   # Create broadcast indices
@@ -451,8 +451,9 @@ def _flatness_loss(beta: Float[Array, "N N"], dbeta: Float[Array, "N N N"]) -> F
   j_idx = jnp.arange(n)[None, :, None]  # (1, n, 1)
   k_idx = jnp.arange(n)[None, None, :]  # (1, 1, n)
 
-  # Mask: k must differ from both i and j
-  first_lame_mask = (k_idx != i_idx) & (k_idx != j_idx)  # (n, n, n)
+  # Mask: k must differ from both i and j, AND i must differ from j
+  # (First Lamé only applies when all three indices are distinct)
+  first_lame_mask = (k_idx != i_idx) & (k_idx != j_idx) & (i_idx != j_idx)  # (n, n, n)
 
   # Compute target values using broadcasting:
   # beta[i,k]: i varies on axis 0, k on axis 2 -> beta[:, None, :] = (n, 1, n)
@@ -626,7 +627,7 @@ def _compute_dbeta_from_beta(
 
   The Lamé equations constrain dbeta given beta:
 
-  1. First Lamé (for k ≠ i and k ≠ j): Fully determines dbeta[i,j,k].
+  1. First Lamé (for k ≠ i, k ≠ j, AND i ≠ j): Fully determines dbeta[i,j,k].
      dbeta[i,j,k] = beta[i,k]*beta[k,j] - beta[i,j]*beta[k,j]
 
   2. Second Lamé (for i ≠ j): Constrains dbeta[j,i,i] + dbeta[i,j,j].
@@ -634,9 +635,11 @@ def _compute_dbeta_from_beta(
      So the sum must equal: -(beta[j,i]² + beta[i,j]² + Σ_{k∉{i,j}} beta[i,k]*beta[j,k])
      We split this evenly between the two entries (or use dbeta_free for asymmetric splits).
 
-  3. Unconstrained entries:
-     - dbeta[i,j,i] for i ≠ j: Set to 0 (or from dbeta_free if provided)
-     - dbeta[i,i,i]: Set to 0 (or from dbeta_free if provided)
+  3. Unconstrained (FREE) entries:
+     - dbeta[i,i,k] for k ≠ i: N(N-1) free parameters (First Lamé requires i ≠ j)
+     - dbeta[i,j,i] for i ≠ j: N(N-1) free parameters (First Lamé requires k ≠ i)
+     - dbeta[i,i,i]: N free parameters (no constraint applies)
+     Total free parameters: N(2N-1)
 
   Args:
     beta: Rotation coefficients, shape (N, N).
@@ -652,12 +655,13 @@ def _compute_dbeta_from_beta(
   # Initialize output
   dbeta = jnp.zeros((n, n, n))
 
-  # === First Lamé: dbeta[i,j,k] for k ≠ i and k ≠ j ===
+  # === First Lamé: dbeta[i,j,k] for k ≠ i, k ≠ j, AND i ≠ j ===
   i_idx = jnp.arange(n)[:, None, None]
   j_idx = jnp.arange(n)[None, :, None]
   k_idx = jnp.arange(n)[None, None, :]
 
-  first_lame_mask = (k_idx != i_idx) & (k_idx != j_idx)
+  # Critical: First Lamé requires ALL THREE conditions: k ≠ i, k ≠ j, i ≠ j
+  first_lame_mask = (k_idx != i_idx) & (k_idx != j_idx) & (i_idx != j_idx)
 
   beta_ik = beta[:, None, :]
   beta_kj = beta.T[None, :, :]
@@ -758,12 +762,13 @@ def create_local_oct(
 
   # Create rotation coefficients (symmetric)
   beta = beta_scale * random.normal(k3, (dim, dim))
-  beta = (beta + beta.T) / 2  # Symmetrize: β_{ij} = β_{ji}
+  # beta = (beta + beta.T) / 2  # Symmetrize: β_{ij} = β_{ji}
 
   # Compute dbeta analytically to satisfy Lamé equations
   dbeta = _compute_dbeta_from_beta(beta)
 
-  return LocalOCT(p, U, log_s, beta, dbeta)
+  local_oct = LocalOCT(p, U, log_s, beta, dbeta)
+  return local_oct
 
 
 def plot_oct_grid(
@@ -1335,6 +1340,19 @@ if __name__ == "__main__":
                       help='Mode to run: "plot" generates visualization plots, "debug" runs coordinate frame analysis')
 
   args = parser.parse_args()
+
+
+  p = random.normal(random.PRNGKey(42), (2,))
+  key = random.PRNGKey(42)
+  oct = create_local_oct(p, key)
+
+
+  frame: Frame = oct.get_coordinate_frame()
+  lb = get_lie_bracket_between_frame_pairs(frame)
+  import pdb; pdb.set_trace()
+  assert jnp.allclose(lb.components.value, 0.0)
+  assert jnp.allclose(lb.components.gradient, 0.0)
+  exit()
 
   if args.mode == 'plot':
     run_plots()
