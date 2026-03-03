@@ -146,7 +146,8 @@ def _get_inverse_rnc_jacobian(gamma_bar: Jet, dxdv: Array) -> Jacobian:
 def _compute_rnc_jacobians(
   metric: RiemannianMetric,
   compute_x_to_v: bool = True,
-  compute_v_to_x: bool = True
+  compute_v_to_x: bool = True,
+  frame_rotation: Optional[Array] = None
 ) -> Tuple[Optional[Jacobian], Optional[Jacobian]]:
   """
   Compute RNC Jacobians efficiently.
@@ -158,6 +159,12 @@ def _compute_rnc_jacobians(
     metric: The Riemannian metric.
     compute_x_to_v: Whether to compute the inverse Jacobian (dv/dx).
     compute_v_to_x: Whether to compute the forward Jacobian (dx/dv).
+    frame_rotation: Optional orthogonal matrix Q (satisfying Q^T Q = I in the
+      Euclidean sense) that resolves the rotational ambiguity of RNC. The
+      orthonormal frame is right-multiplied by Q, so dxdv becomes E @ Q where
+      E is the default eigenvector-based frame. Because E already maps from a
+      Euclidean tangent space to x-coordinates, Q acts as a rotation in the
+      flat tangent space. When None, the identity is used.
 
   Returns:
     (J_x_to_v, J_v_to_x): The inverse Jacobian (dv/dx) and forward Jacobian (dx/dv).
@@ -175,6 +182,9 @@ def _compute_rnc_jacobians(
 
   dxdv = jnp.einsum("ij,j->ij", eigenvectors, jax.lax.rsqrt(eigenvalues))
 
+  if frame_rotation is not None:
+    dxdv = dxdv @ frame_rotation
+
   # Compute Jacobians directly using explicit formulas
   J_v_to_x = _get_rnc_jacobian(gamma_bar, dxdv) if compute_v_to_x else None
   J_x_to_v = _get_inverse_rnc_jacobian(gamma_bar, dxdv) if compute_x_to_v else None
@@ -184,7 +194,8 @@ def _compute_rnc_jacobians(
 
 def get_transformation_to_riemann_normal_coordinates(
   metric: RiemannianMetric,
-  J_x_to_v: Optional[Jacobian] = None
+  J_x_to_v: Optional[Jacobian] = None,
+  frame_rotation: Optional[Array] = None
 ) -> Jacobian:
   """
   Get the Jacobian for the transformation TO Riemann normal coordinates (dv/dx).
@@ -192,6 +203,7 @@ def get_transformation_to_riemann_normal_coordinates(
   Args:
     metric: The Riemannian metric.
     J_x_to_v: Optional pre-computed Jacobian. If provided, returns it directly.
+    frame_rotation: Optional orthogonal matrix resolving the RNC rotational ambiguity.
 
   Returns:
     J_x_to_v: The Jacobian for the inverse map v(x) at x = metric.basis.p.
@@ -199,13 +211,14 @@ def get_transformation_to_riemann_normal_coordinates(
   if J_x_to_v is not None:
     return J_x_to_v
 
-  J_x_to_v, _ = _compute_rnc_jacobians(metric, compute_v_to_x=False)
+  J_x_to_v, _ = _compute_rnc_jacobians(metric, compute_v_to_x=False, frame_rotation=frame_rotation)
   return J_x_to_v
 
 
 def get_transformation_from_riemann_normal_coordinates(
   metric: RiemannianMetric,
-  J_v_to_x: Optional[Jacobian] = None
+  J_v_to_x: Optional[Jacobian] = None,
+  frame_rotation: Optional[Array] = None
 ) -> Jacobian:
   """
   Get the Jacobian for the transformation FROM Riemann normal coordinates (dx/dv).
@@ -213,6 +226,7 @@ def get_transformation_from_riemann_normal_coordinates(
   Args:
     metric: The Riemannian metric.
     J_v_to_x: Optional pre-computed Jacobian. If provided, returns it directly.
+    frame_rotation: Optional orthogonal matrix resolving the RNC rotational ambiguity.
 
   Returns:
     J_v_to_x: The Jacobian for the forward map x(v) at v = 0.
@@ -220,11 +234,14 @@ def get_transformation_from_riemann_normal_coordinates(
   if J_v_to_x is not None:
     return J_v_to_x
 
-  _, J_v_to_x = _compute_rnc_jacobians(metric, compute_x_to_v=False)
+  _, J_v_to_x = _compute_rnc_jacobians(metric, compute_x_to_v=False, frame_rotation=frame_rotation)
   return J_v_to_x
 
 
-def get_rnc_jacobians(metric: RiemannianMetric) -> Tuple[Jacobian, Jacobian]:
+def get_rnc_jacobians(
+  metric: RiemannianMetric,
+  frame_rotation: Optional[Array] = None
+) -> Tuple[Jacobian, Jacobian]:
   """
   Get both RNC Jacobians efficiently.
 
@@ -233,17 +250,19 @@ def get_rnc_jacobians(metric: RiemannianMetric) -> Tuple[Jacobian, Jacobian]:
 
   Args:
     metric: The Riemannian metric.
+    frame_rotation: Optional orthogonal matrix resolving the RNC rotational ambiguity.
 
   Returns:
     (J_x_to_v, J_v_to_x): The inverse Jacobian (dv/dx) and forward Jacobian (dx/dv).
   """
-  return _compute_rnc_jacobians(metric)
+  return _compute_rnc_jacobians(metric, frame_rotation=frame_rotation)
 
 
 def _resolve_jacobian_pair(
   metric: RiemannianMetric,
   J_x_to_v: Optional[Jacobian],
-  J_v_to_x: Optional[Jacobian]
+  J_v_to_x: Optional[Jacobian],
+  frame_rotation: Optional[Array] = None
 ) -> Tuple[Jacobian, Jacobian]:
   """
   Resolve a pair of Jacobians, computing missing ones as needed.
@@ -253,7 +272,7 @@ def _resolve_jacobian_pair(
   If both are provided, returns them as-is.
   """
   if J_x_to_v is None and J_v_to_x is None:
-    return get_rnc_jacobians(metric)
+    return get_rnc_jacobians(metric, frame_rotation=frame_rotation)
   elif J_x_to_v is None:
     return J_v_to_x.get_inverse(), J_v_to_x
   elif J_v_to_x is None:
@@ -264,7 +283,8 @@ def _resolve_jacobian_pair(
 
 def get_rnc_basis(
   metric: RiemannianMetric,
-  J_v_to_x: Optional[Jacobian] = None
+  J_v_to_x: Optional[Jacobian] = None,
+  frame_rotation: Optional[Array] = None
 ) -> BasisVectors:
   """
   Get the Riemann normal coordinate basis as a BasisVectors object.
@@ -277,9 +297,10 @@ def get_rnc_basis(
     metric: The Riemannian metric.
     J_v_to_x: Optional pre-computed forward Jacobian (dx/dv). If not provided,
               it will be computed.
+    frame_rotation: Optional orthogonal matrix resolving the RNC rotational ambiguity.
   """
   if J_v_to_x is None:
-    J_v_to_x = get_transformation_from_riemann_normal_coordinates(metric)
+    J_v_to_x = get_transformation_from_riemann_normal_coordinates(metric, frame_rotation=frame_rotation)
 
   # J_v_to_x has derivatives w.r.t. v, but BasisVectors needs derivatives w.r.t. x.
   # Use change_coordinates_jet to convert from v-derivatives to x-derivatives.
@@ -294,7 +315,8 @@ def get_rnc_basis(
 
 def get_rnc_frame(
   metric: RiemannianMetric,
-  J_v_to_x: Optional[Jacobian] = None
+  J_v_to_x: Optional[Jacobian] = None,
+  frame_rotation: Optional[Array] = None
 ) -> Frame:
   """
   Get the Riemann normal coordinate frame as a Frame object.
@@ -303,15 +325,17 @@ def get_rnc_frame(
     metric: The Riemannian metric.
     J_v_to_x: Optional pre-computed forward Jacobian (dx/dv). If not provided,
               it will be computed.
+    frame_rotation: Optional orthogonal matrix resolving the RNC rotational ambiguity.
   """
-  rnc_basis = get_rnc_basis(metric, J_v_to_x=J_v_to_x)
+  rnc_basis = get_rnc_basis(metric, J_v_to_x=J_v_to_x, frame_rotation=frame_rotation)
   return Frame(p=metric.basis.p, components=get_identity_jet(metric.basis.p.shape[0]), basis=rnc_basis)
 
 @dispatch
 def to_riemann_normal_coordinates(
   metric: RiemannianMetric,
   J_x_to_v: Optional[Jacobian] = None,
-  J_v_to_x: Optional[Jacobian] = None
+  J_v_to_x: Optional[Jacobian] = None,
+  frame_rotation: Optional[Array] = None
 ) -> RiemannianMetric:
   """
   Transform a RiemannianMetric to Riemann normal coordinates.
@@ -325,8 +349,9 @@ def to_riemann_normal_coordinates(
     metric: The Riemannian metric.
     J_x_to_v: Optional pre-computed inverse Jacobian (dv/dx).
     J_v_to_x: Optional pre-computed forward Jacobian (dx/dv).
+    frame_rotation: Optional orthogonal matrix resolving the RNC rotational ambiguity.
   """
-  J_x_to_v, J_v_to_x = _resolve_jacobian_pair(metric, J_x_to_v, J_v_to_x)
+  J_x_to_v, J_v_to_x = _resolve_jacobian_pair(metric, J_x_to_v, J_v_to_x, frame_rotation=frame_rotation)
 
   rnc_basis = get_rnc_basis(metric, J_v_to_x=J_v_to_x)
 
@@ -343,7 +368,8 @@ def to_riemann_normal_coordinates(
 def to_riemann_normal_coordinates(
   basis: BasisVectors,
   metric: RiemannianMetric,
-  J_x_to_v: Optional[Jacobian] = None
+  J_x_to_v: Optional[Jacobian] = None,
+  frame_rotation: Optional[Array] = None
 ) -> BasisVectors:
   """
   Transform a BasisVectors object to Riemann normal coordinates.
@@ -358,8 +384,9 @@ def to_riemann_normal_coordinates(
     basis: The basis vectors to transform.
     metric: The Riemannian metric.
     J_x_to_v: Optional pre-computed inverse Jacobian (dv/dx).
+    frame_rotation: Optional orthogonal matrix resolving the RNC rotational ambiguity.
   """
-  J_x_to_v = get_transformation_to_riemann_normal_coordinates(metric, J_x_to_v=J_x_to_v)
+  J_x_to_v = get_transformation_to_riemann_normal_coordinates(metric, J_x_to_v=J_x_to_v, frame_rotation=frame_rotation)
   return change_coordinates_basis(basis, J_x_to_v)
 
 
@@ -368,7 +395,8 @@ def to_riemann_normal_coordinates(
   vector: TangentVector,
   metric: RiemannianMetric,
   J_x_to_v: Optional[Jacobian] = None,
-  J_v_to_x: Optional[Jacobian] = None
+  J_v_to_x: Optional[Jacobian] = None,
+  frame_rotation: Optional[Array] = None
 ) -> TangentVector:
   """
   Transform a TangentVector to Riemann normal coordinates.
@@ -381,10 +409,11 @@ def to_riemann_normal_coordinates(
     metric: The Riemannian metric.
     J_x_to_v: Optional pre-computed inverse Jacobian (dv/dx).
     J_v_to_x: Optional pre-computed forward Jacobian (dx/dv).
+    frame_rotation: Optional orthogonal matrix resolving the RNC rotational ambiguity.
   """
   from local_coordinates.tangent import change_basis as change_basis_tangent
 
-  J_x_to_v, J_v_to_x = _resolve_jacobian_pair(metric, J_x_to_v, J_v_to_x)
+  J_x_to_v, J_v_to_x = _resolve_jacobian_pair(metric, J_x_to_v, J_v_to_x, frame_rotation=frame_rotation)
 
   rnc_basis = get_rnc_basis(metric, J_v_to_x=J_v_to_x)
 
@@ -402,7 +431,8 @@ def to_riemann_normal_coordinates(
   frame: Frame,
   metric: RiemannianMetric,
   J_x_to_v: Optional[Jacobian] = None,
-  J_v_to_x: Optional[Jacobian] = None
+  J_v_to_x: Optional[Jacobian] = None,
+  frame_rotation: Optional[Array] = None
 ) -> Frame:
   """
   Transform a Frame to Riemann normal coordinates.
@@ -415,10 +445,11 @@ def to_riemann_normal_coordinates(
     metric: The Riemannian metric.
     J_x_to_v: Optional pre-computed inverse Jacobian (dv/dx).
     J_v_to_x: Optional pre-computed forward Jacobian (dx/dv).
+    frame_rotation: Optional orthogonal matrix resolving the RNC rotational ambiguity.
   """
   from local_coordinates.frame import change_basis as change_basis_frame
 
-  J_x_to_v, J_v_to_x = _resolve_jacobian_pair(metric, J_x_to_v, J_v_to_x)
+  J_x_to_v, J_v_to_x = _resolve_jacobian_pair(metric, J_x_to_v, J_v_to_x, frame_rotation=frame_rotation)
 
   rnc_basis = get_rnc_basis(metric, J_v_to_x=J_v_to_x)
 
@@ -436,7 +467,8 @@ def to_riemann_normal_coordinates(
   tensor: Tensor,
   metric: RiemannianMetric,
   J_x_to_v: Optional[Jacobian] = None,
-  J_v_to_x: Optional[Jacobian] = None
+  J_v_to_x: Optional[Jacobian] = None,
+  frame_rotation: Optional[Array] = None
 ) -> Tensor:
   """
   Transform a Tensor to Riemann normal coordinates.
@@ -449,8 +481,9 @@ def to_riemann_normal_coordinates(
     metric: The Riemannian metric.
     J_x_to_v: Optional pre-computed inverse Jacobian (dv/dx).
     J_v_to_x: Optional pre-computed forward Jacobian (dx/dv).
+    frame_rotation: Optional orthogonal matrix resolving the RNC rotational ambiguity.
   """
-  J_x_to_v, J_v_to_x = _resolve_jacobian_pair(metric, J_x_to_v, J_v_to_x)
+  J_x_to_v, J_v_to_x = _resolve_jacobian_pair(metric, J_x_to_v, J_v_to_x, frame_rotation=frame_rotation)
 
   rnc_basis = get_rnc_basis(metric, J_v_to_x=J_v_to_x)
 
@@ -468,7 +501,8 @@ def to_riemann_normal_coordinates(
   connection: Connection,
   metric: RiemannianMetric,
   J_x_to_v: Optional[Jacobian] = None,
-  J_v_to_x: Optional[Jacobian] = None
+  J_v_to_x: Optional[Jacobian] = None,
+  frame_rotation: Optional[Array] = None
 ) -> Connection:
   """
   Transform a Connection to Riemann normal coordinates.
@@ -484,10 +518,11 @@ def to_riemann_normal_coordinates(
     metric: The Riemannian metric.
     J_x_to_v: Optional pre-computed inverse Jacobian (dv/dx).
     J_v_to_x: Optional pre-computed forward Jacobian (dx/dv).
+    frame_rotation: Optional orthogonal matrix resolving the RNC rotational ambiguity.
   """
   from local_coordinates.connection import change_basis as change_basis_connection
 
-  J_x_to_v, J_v_to_x = _resolve_jacobian_pair(metric, J_x_to_v, J_v_to_x)
+  J_x_to_v, J_v_to_x = _resolve_jacobian_pair(metric, J_x_to_v, J_v_to_x, frame_rotation=frame_rotation)
 
   rnc_basis = get_rnc_basis(metric, J_v_to_x=J_v_to_x)
 

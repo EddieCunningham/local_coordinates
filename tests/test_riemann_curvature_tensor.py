@@ -2,7 +2,7 @@ import jax.numpy as jnp
 from jax import random
 import numpy as np
 
-from local_coordinates.metric import RiemannianMetric, lower_index
+from local_coordinates.metric import RiemannianMetric, lower_index, pullback_metric
 from local_coordinates.basis import get_standard_basis
 from local_coordinates.jet import function_to_jet
 from local_coordinates.connection import get_levi_civita_connection
@@ -661,3 +661,231 @@ def test_ricci_tensor_flat_metric():
   ricci = get_ricci_tensor(connection)
 
   assert jnp.allclose(ricci.components.value, 0.0)
+
+
+# ============================================================================
+# Tests for curvature of pullback metrics through non-dimension-preserving maps
+# ============================================================================
+
+def _pullback_curvature_pipeline(x, f, h):
+  """Helper that runs the full curvature pipeline on a pullback metric."""
+  g = pullback_metric(x, f, h)
+  connection = get_levi_civita_connection(g)
+  riemann = get_riemann_curvature_tensor(connection)
+  ricci = get_ricci_tensor(connection, R=riemann)
+  R_lower = lower_index(riemann, g, 4)
+  R = R_lower.components.value
+  g_val = g.components.value
+  g_inv = jnp.linalg.inv(g_val)
+  ricci_scalar = jnp.einsum("ab,ab->", g_inv, ricci.components.value)
+  return g, connection, riemann, ricci, R, ricci_scalar
+
+
+def test_curvature_pullback_linear_dimension_expanding_4d():
+  """
+  Pullback of Euclidean metric on R^4 under a linear map R^2 -> R^4.
+  The pullback A^T A is constant so all curvature must vanish.
+  """
+  A = jnp.array([[1., 0.], [0., 1.], [1., -1.], [0.5, 0.5]])
+
+  def f(x):
+    return A @ x
+
+  x = jnp.array([1.0, 2.0])
+  y = f(x)
+  dim_n = 4
+
+  h = RiemannianMetric(
+    basis=get_standard_basis(y),
+    components=Jet(
+      value=jnp.eye(dim_n),
+      gradient=jnp.zeros((dim_n, dim_n, dim_n)),
+      hessian=jnp.zeros((dim_n, dim_n, dim_n, dim_n)),
+    ),
+  )
+
+  g, connection, riemann, ricci, R_lower, ricci_scalar = _pullback_curvature_pipeline(x, f, h)
+
+  assert g.components.value.shape == (2, 2)
+  assert jnp.allclose(riemann.components.value, 0.0, atol=1e-6)
+  assert jnp.allclose(ricci.components.value, 0.0, atol=1e-6)
+  assert jnp.allclose(ricci_scalar, 0.0, atol=1e-6)
+
+
+def test_curvature_pullback_linear_dimension_expanding():
+  """
+  Pullback of Euclidean metric on R^3 under a linear map R^2 -> R^3.
+  The pullback A^T A is constant so all curvature must vanish.
+  """
+  A = jnp.array([[1., 0.], [0., 1.], [1., -1.]])
+
+  def f(x):
+    return A @ x
+
+  x = jnp.array([1.0, 2.0])
+  y = f(x)
+  dim_n = 3
+
+  h = RiemannianMetric(
+    basis=get_standard_basis(y),
+    components=Jet(
+      value=jnp.eye(dim_n),
+      gradient=jnp.zeros((dim_n, dim_n, dim_n)),
+      hessian=jnp.zeros((dim_n, dim_n, dim_n, dim_n)),
+    ),
+  )
+
+  g, connection, riemann, ricci, R_lower, ricci_scalar = _pullback_curvature_pipeline(x, f, h)
+
+  assert g.components.value.shape == (2, 2)
+  assert jnp.allclose(riemann.components.value, 0.0, atol=1e-6)
+  assert jnp.allclose(ricci.components.value, 0.0, atol=1e-6)
+  assert jnp.allclose(ricci_scalar, 0.0, atol=1e-6)
+
+
+def test_curvature_pullback_paraboloid_embedding():
+  """
+  Pullback of Euclidean metric on R^3 under the paraboloid embedding
+  f(x) = (x0, x1, x0^2 + x1^2) from R^2 -> R^3.
+  Verify all Riemann symmetries and Ricci symmetry hold.
+  """
+  def embed(x):
+    return jnp.array([x[0], x[1], x[0]**2 + x[1]**2])
+
+  x = jnp.array([1.0, 0.5])
+  y = embed(x)
+  dim_n = 3
+
+  h = RiemannianMetric(
+    basis=get_standard_basis(y),
+    components=Jet(
+      value=jnp.eye(dim_n),
+      gradient=jnp.zeros((dim_n, dim_n, dim_n)),
+      hessian=jnp.zeros((dim_n, dim_n, dim_n, dim_n)),
+    ),
+  )
+
+  g, connection, riemann, ricci, R, ricci_scalar = _pullback_curvature_pipeline(x, embed, h)
+
+  assert g.components.value.shape == (2, 2)
+  assert R.shape == (2, 2, 2, 2)
+
+  # Skew symmetry in first pair
+  assert jnp.allclose(R, -R.swapaxes(0, 1), atol=1e-5)
+
+  # Skew symmetry in second pair
+  assert jnp.allclose(R, -R.swapaxes(-1, -2), atol=1e-5)
+
+  # Interchange symmetry
+  assert jnp.allclose(R, R.transpose((2, 3, 0, 1)), atol=1e-5)
+
+  # First Bianchi identity
+  bianchi = R + R.transpose((0, 2, 3, 1)) + R.transpose((0, 3, 1, 2))
+  assert jnp.allclose(bianchi, 0.0, atol=1e-5)
+
+  # Ricci symmetry
+  Ric = ricci.components.value
+  assert jnp.allclose(Ric, Ric.T, atol=1e-5)
+
+  # Ricci scalar should be finite
+  assert jnp.isfinite(ricci_scalar)
+
+
+def test_curvature_pullback_sphere_embedding():
+  """
+  Pullback of Euclidean metric on R^3 under the sphere embedding
+  f(theta, phi) = (sin(theta)*cos(phi), sin(theta)*sin(phi), cos(theta))
+  from R^2 -> R^3. Verify Riemann symmetries and Ricci symmetry.
+  The sphere has constant positive Gaussian curvature K=1.
+  """
+  def embed(x):
+    theta, phi = x[0], x[1]
+    return jnp.array([
+      jnp.sin(theta) * jnp.cos(phi),
+      jnp.sin(theta) * jnp.sin(phi),
+      jnp.cos(theta),
+    ])
+
+  x = jnp.array([1.0, 0.5])
+  y = embed(x)
+  dim_n = 3
+
+  h = RiemannianMetric(
+    basis=get_standard_basis(y),
+    components=Jet(
+      value=jnp.eye(dim_n),
+      gradient=jnp.zeros((dim_n, dim_n, dim_n)),
+      hessian=jnp.zeros((dim_n, dim_n, dim_n, dim_n)),
+    ),
+  )
+
+  g, connection, riemann, ricci, R, ricci_scalar = _pullback_curvature_pipeline(x, embed, h)
+
+  assert g.components.value.shape == (2, 2)
+  assert R.shape == (2, 2, 2, 2)
+
+  # Skew symmetry in first pair
+  assert jnp.allclose(R, -R.swapaxes(0, 1), atol=1e-5)
+
+  # Skew symmetry in second pair
+  assert jnp.allclose(R, -R.swapaxes(-1, -2), atol=1e-5)
+
+  # Interchange symmetry
+  assert jnp.allclose(R, R.transpose((2, 3, 0, 1)), atol=1e-5)
+
+  # First Bianchi identity
+  bianchi = R + R.transpose((0, 2, 3, 1)) + R.transpose((0, 3, 1, 2))
+  assert jnp.allclose(bianchi, 0.0, atol=1e-5)
+
+  # Ricci symmetry
+  Ric = ricci.components.value
+  assert jnp.allclose(Ric, Ric.T, atol=1e-5)
+
+  # For the unit sphere, Ricci scalar = 2 (constant Gaussian curvature K=1, R_scalar = 2K)
+  assert jnp.allclose(ricci_scalar, 2.0, atol=1e-4)
+
+
+def test_ricci_scalar_pullback_paraboloid():
+  """
+  End-to-end test that the Ricci scalar for the paraboloid pullback metric
+  is a specific finite value, verifying the full curvature pipeline works
+  for dimension-expanding maps.
+  """
+  def embed(x):
+    return jnp.array([x[0], x[1], x[0]**2 + x[1]**2])
+
+  x = jnp.array([0.0, 0.0])
+  y = embed(x)
+  dim_n = 3
+
+  h = RiemannianMetric(
+    basis=get_standard_basis(y),
+    components=Jet(
+      value=jnp.eye(dim_n),
+      gradient=jnp.zeros((dim_n, dim_n, dim_n)),
+      hessian=jnp.zeros((dim_n, dim_n, dim_n, dim_n)),
+    ),
+  )
+
+  g, connection, riemann, ricci, R, ricci_scalar = _pullback_curvature_pipeline(x, embed, h)
+
+  # At the origin the paraboloid is locally flat (Jacobian = [[1,0],[0,1],[0,0]])
+  # so the metric is identity and curvature should be related to the Hessian of
+  # the embedding. The Ricci scalar should be finite and well-defined.
+  assert jnp.isfinite(ricci_scalar)
+  assert not jnp.isnan(ricci_scalar)
+
+  # Also verify at a non-origin point
+  x2 = jnp.array([1.0, 0.5])
+  y2 = embed(x2)
+  h2 = RiemannianMetric(
+    basis=get_standard_basis(y2),
+    components=Jet(
+      value=jnp.eye(dim_n),
+      gradient=jnp.zeros((dim_n, dim_n, dim_n)),
+      hessian=jnp.zeros((dim_n, dim_n, dim_n, dim_n)),
+    ),
+  )
+  _, _, _, _, _, ricci_scalar2 = _pullback_curvature_pipeline(x2, embed, h2)
+  assert jnp.isfinite(ricci_scalar2)
+  assert not jnp.isnan(ricci_scalar2)

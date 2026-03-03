@@ -26,8 +26,15 @@ from jaxtyping import Array, Scalar
 from typing import Annotated, Callable
 import equinox as eqx
 from local_coordinates.frame import get_lie_bracket_between_frame_pairs
-from local_coordinates.normal_coords import _get_rnc_jacobian
+from local_coordinates.normal_coords import _get_rnc_jacobian, _get_inverse_rnc_jacobian
 import jax
+
+
+def random_orthogonal(key, dim):
+  """Generate a random orthogonal matrix via QR decomposition."""
+  A = random.normal(key, (dim, dim))
+  Q, _ = jnp.linalg.qr(A)
+  return Q
 
 
 def create_random_basis(key: random.PRNGKey, dim: int, p: Array = None) -> BasisVectors:
@@ -2223,4 +2230,148 @@ def test_rnc_downstream_still_works_with_direct_jacobian():
   assert jnp.allclose(connection_rnc.christoffel_symbols.value, 0.0, atol=1e-5), \
     "Christoffel symbols should vanish in RNC"
 
+
+# =============================================================================
+# Tests for frame_rotation parameter
+# =============================================================================
+
+def test_frame_rotation_none_equals_identity():
+  """frame_rotation=None and frame_rotation=I should produce identical Jacobians."""
+  key = random.PRNGKey(42)
+  dim = 4
+  metric = create_random_metric(key, dim=dim)
+
+  J_x_to_v_default, J_v_to_x_default = get_rnc_jacobians(metric)
+  J_x_to_v_eye, J_v_to_x_eye = get_rnc_jacobians(metric, frame_rotation=jnp.eye(dim))
+
+  assert jnp.allclose(J_x_to_v_default.value, J_x_to_v_eye.value, atol=1e-12)
+  assert jnp.allclose(J_x_to_v_default.gradient, J_x_to_v_eye.gradient, atol=1e-12)
+  assert jnp.allclose(J_x_to_v_default.hessian, J_x_to_v_eye.hessian, atol=1e-12)
+  assert jnp.allclose(J_v_to_x_default.value, J_v_to_x_eye.value, atol=1e-12)
+  assert jnp.allclose(J_v_to_x_default.gradient, J_v_to_x_eye.gradient, atol=1e-12)
+  assert jnp.allclose(J_v_to_x_default.hessian, J_v_to_x_eye.hessian, atol=1e-12)
+
+
+def test_frame_rotation_metric_still_identity():
+  """With any orthogonal Q, the RNC metric is still identity at the origin."""
+  key = random.PRNGKey(43)
+  dim = 4
+  metric_key, rot_key = random.split(key)
+  metric = create_random_metric(metric_key, dim=dim)
+  Q = random_orthogonal(rot_key, dim)
+
+  metric_rnc = to_riemann_normal_coordinates(metric, frame_rotation=Q)
+
+  assert jnp.allclose(metric_rnc.components.value, jnp.eye(dim), atol=1e-5)
+
+
+def test_frame_rotation_metric_gradient_vanishes():
+  """With any orthogonal Q, the RNC metric gradient still vanishes at the origin."""
+  key = random.PRNGKey(44)
+  dim = 4
+  metric_key, rot_key = random.split(key)
+  metric = create_random_metric(metric_key, dim=dim)
+  Q = random_orthogonal(rot_key, dim)
+
+  metric_rnc = to_riemann_normal_coordinates(metric, frame_rotation=Q)
+
+  assert jnp.allclose(metric_rnc.components.gradient, 0.0, atol=1e-5)
+
+
+def test_frame_rotation_christoffel_vanishes():
+  """With any orthogonal Q, Christoffel symbols still vanish in RNC."""
+  key = random.PRNGKey(45)
+  dim = 3
+  metric_key, rot_key = random.split(key)
+  metric = create_random_metric(metric_key, dim=dim)
+  Q = random_orthogonal(rot_key, dim)
+
+  connection = get_levi_civita_connection(metric)
+  connection_rnc = to_riemann_normal_coordinates(connection, metric, frame_rotation=Q)
+
+  assert jnp.allclose(connection_rnc.christoffel_symbols.value, 0.0, atol=1e-5)
+
+
+def test_frame_rotation_different_q_gives_different_jacobians():
+  """Two distinct rotations should produce different Jacobian values."""
+  key = random.PRNGKey(46)
+  dim = 4
+  metric_key, rot_key1, rot_key2 = random.split(key, 3)
+  metric = create_random_metric(metric_key, dim=dim)
+  Q1 = random_orthogonal(rot_key1, dim)
+  Q2 = random_orthogonal(rot_key2, dim)
+
+  J1_x_to_v, _ = get_rnc_jacobians(metric, frame_rotation=Q1)
+  J2_x_to_v, _ = get_rnc_jacobians(metric, frame_rotation=Q2)
+
+  assert not jnp.allclose(J1_x_to_v.value, J2_x_to_v.value, atol=1e-5)
+
+
+def test_frame_rotation_relationship_between_two_choices():
+  """
+  Two RNC systems related by rotations Q1 and Q2 should satisfy
+  J2_x_to_v.value = Q2.T @ Q1 @ J1_x_to_v.value, since the two
+  coordinate systems differ by the rotation Q2.T @ Q1.
+  """
+  key = random.PRNGKey(47)
+  dim = 4
+  metric_key, rot_key1, rot_key2 = random.split(key, 3)
+  metric = create_random_metric(metric_key, dim=dim)
+  Q1 = random_orthogonal(rot_key1, dim)
+  Q2 = random_orthogonal(rot_key2, dim)
+
+  J1_x_to_v, _ = get_rnc_jacobians(metric, frame_rotation=Q1)
+  J2_x_to_v, _ = get_rnc_jacobians(metric, frame_rotation=Q2)
+
+  R = Q2.T @ Q1
+  expected = R @ J1_x_to_v.value
+  assert jnp.allclose(J2_x_to_v.value, expected, atol=1e-10)
+
+
+def test_frame_rotation_plumbing_to_rnc_basis():
+  """frame_rotation flows correctly through get_rnc_basis."""
+  key = random.PRNGKey(48)
+  dim = 3
+  metric_key, rot_key = random.split(key)
+  metric = create_random_metric(metric_key, dim=dim)
+  Q = random_orthogonal(rot_key, dim)
+
+  basis_default = get_rnc_basis(metric)
+  basis_rotated = get_rnc_basis(metric, frame_rotation=Q)
+
+  assert not jnp.allclose(basis_default.components.value, basis_rotated.components.value, atol=1e-5)
+
+
+def test_frame_rotation_plumbing_to_rnc_frame():
+  """frame_rotation flows correctly through get_rnc_frame."""
+  key = random.PRNGKey(49)
+  dim = 3
+  metric_key, rot_key = random.split(key)
+  metric = create_random_metric(metric_key, dim=dim)
+  Q = random_orthogonal(rot_key, dim)
+
+  frame_default = get_rnc_frame(metric)
+  frame_rotated = get_rnc_frame(metric, frame_rotation=Q)
+
+  assert not jnp.allclose(
+    frame_default.basis.components.value,
+    frame_rotated.basis.components.value,
+    atol=1e-5
+  )
+
+
+def test_frame_rotation_multiple_dimensions():
+  """RNC invariants hold with frame_rotation for various dimensions."""
+  for dim in [2, 3, 5]:
+    key = random.PRNGKey(50 + dim)
+    metric_key, rot_key = random.split(key)
+    metric = create_random_metric(metric_key, dim=dim)
+    Q = random_orthogonal(rot_key, dim)
+
+    metric_rnc = to_riemann_normal_coordinates(metric, frame_rotation=Q)
+
+    assert jnp.allclose(metric_rnc.components.value, jnp.eye(dim), atol=1e-5), \
+      f"Metric should be identity in RNC for dim={dim}"
+    assert jnp.allclose(metric_rnc.components.gradient, 0.0, atol=1e-5), \
+      f"Metric gradient should vanish in RNC for dim={dim}"
 
