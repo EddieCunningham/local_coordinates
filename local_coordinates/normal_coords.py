@@ -25,12 +25,26 @@ from local_coordinates.connection import Connection, get_levi_civita_connection
 from local_coordinates.connection import change_coordinates as change_coordinates_connection
 from local_coordinates.jacobian import Jacobian
 
-def _get_rnc_jacobian(gamma_bar: Jet, dxdv: Array) -> Jacobian:
+def _get_rnc_jacobian(
+  gamma_bar: Jet,
+  gij: Array,
+  frame_rotation: Optional[Array] = None,
+) -> Jacobian:
   """
   Do the heavy lifting for the Jacobian for the Riemann normal coordinate transformation.
 
-  Returns the forward Jacobian J_v_to_x (dx/dv).
+  Builds the orthonormal frame J = dx/dv from the metric matrix gij at p, optionally
+  right-multiplied by frame_rotation, then returns the forward Jacobian J_v_to_x (dx/dv).
+
+  Args:
+    gamma_bar: Christoffel symbols at p in the same coordinates as gij.
+    gij: Metric components g_{ab} at p.
+    frame_rotation: Optional orthogonal Q with J = E @ Q where E is the default eigen frame.
   """
+  eigenvalues, eigenvectors = jnp.linalg.eigh(gij)
+  dxdv = jnp.einsum("ij,j->ij", eigenvectors, jax.lax.rsqrt(eigenvalues))
+  if frame_rotation is not None:
+    dxdv = dxdv @ frame_rotation
 
   # Second order: d2x/dv2 = -Gamma^i_ab * J^a_j * J^b_k
   d2xdv2 = -jnp.einsum("abi,aj,bk->ijk", gamma_bar.value, dxdv, dxdv)
@@ -70,7 +84,11 @@ def _get_rnc_jacobian(gamma_bar: Jet, dxdv: Array) -> Jacobian:
   return J_v_to_x
 
 
-def _get_inverse_rnc_jacobian(gamma_bar: Jet, dxdv: Array) -> Jacobian:
+def _get_inverse_rnc_jacobian(
+  gamma_bar: Jet,
+  gij: Array,
+  frame_rotation: Optional[Array] = None,
+) -> Jacobian:
   """
   Compute the inverse RNC Jacobian J_x_to_v (dv/dx) directly.
 
@@ -78,7 +96,7 @@ def _get_inverse_rnc_jacobian(gamma_bar: Jet, dxdv: Array) -> Jacobian:
   derived from the general inverse-Jacobian formula, simplified for RNC.
 
   The formulas are:
-    - Value: K = J^{-1} (matrix inverse)
+    - Value: K = J^T g (equivalently J^{-1} for the g-orthonormal frame J = dx/dv)
     - Gradient: d²v/dx² = K @ Γ (simpler than general O(n^5) formula)
     - Hessian: d³v/dx³ = (1/3) K @ [∂Γ terms + Γ² terms]
 
@@ -89,14 +107,17 @@ def _get_inverse_rnc_jacobian(gamma_bar: Jet, dxdv: Array) -> Jacobian:
 
   Args:
     gamma_bar: Christoffel symbols as a Jet with value Γ^i_pq and gradient ∂_m Γ^i_pq.
-    dxdv: The orthonormal frame matrix J = dx/dv.
+    gij: Metric components g_{ab} at p in the same coordinates as gamma_bar.
+    frame_rotation: Optional orthogonal Q, same convention as _get_rnc_jacobian.
 
   Returns:
     J_x_to_v: The inverse Jacobian (dv/dx) at x = p.
   """
-  # Value: K = J^{-1}
-  # K^i_j = (J^{-1})^i_j = dv^i/dx^j
-  dvdx = jnp.linalg.inv(dxdv)
+  eigenvalues, eigenvectors = jnp.linalg.eigh(gij)
+  # K = J^T g is Λ^{1/2} Q^T for J = Q Λ^{-1/2}. With J = Q Λ^{-1/2} R, left-multiply by R^T.
+  dvdx = jnp.einsum("ij,j->ji", eigenvectors, jnp.sqrt(eigenvalues))
+  if frame_rotation is not None:
+    dvdx = frame_rotation.T @ dvdx
 
   # Gradient: d²v^i/dx^j dx^k = K^i_c Γ^c_jk
   # This is much simpler than the general inverse formula which requires O(n^5) ops.
@@ -176,18 +197,16 @@ def _compute_rnc_jacobians(
   connection: Connection = get_levi_civita_connection(metric_std)
   gamma_bar: Jet = connection.christoffel_symbols
 
-  # Construct an orthonormal basis of tangent vectors at the point p.
   gij: Array = metric_std.components.value
-  eigenvalues, eigenvectors = jnp.linalg.eigh(gij)
 
-  dxdv = jnp.einsum("ij,j->ij", eigenvectors, jax.lax.rsqrt(eigenvalues))
-
-  if frame_rotation is not None:
-    dxdv = dxdv @ frame_rotation
-
-  # Compute Jacobians directly using explicit formulas
-  J_v_to_x = _get_rnc_jacobian(gamma_bar, dxdv) if compute_v_to_x else None
-  J_x_to_v = _get_inverse_rnc_jacobian(gamma_bar, dxdv) if compute_x_to_v else None
+  J_v_to_x = (
+    _get_rnc_jacobian(gamma_bar, gij, frame_rotation) if compute_v_to_x else None
+  )
+  J_x_to_v = (
+    _get_inverse_rnc_jacobian(gamma_bar, gij, frame_rotation)
+    if compute_x_to_v
+    else None
+  )
 
   return J_x_to_v, J_v_to_x
 

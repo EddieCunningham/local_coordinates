@@ -1834,8 +1834,8 @@ def test_principal_ricci_coordinates():
      This frame is still orthonormal with respect to g: (EQ)^T g (EQ) = Q^T (E^T g E) Q = Q^T I Q = I.
      The RNC built from this frame will have a diagonal Ricci tensor.
 
-  5. Use _get_rnc_jacobian to compute the full Jacobian J_s_to_x from principal Ricci coords (s)
-     to standard coords (x), including higher-order corrections from the Christoffel symbols.
+  5. Use _get_rnc_jacobian(gamma_bar, gij, frame_rotation=Q) to compute J_s_to_x from
+     principal Ricci coords (s) to standard coords (x), including higher-order corrections.
 
   6. Transform the metric to principal Ricci coordinates using to_riemann_normal_coordinates.
 
@@ -1887,20 +1887,10 @@ def test_principal_ricci_coordinates():
   ricci_rnc = get_ricci_tensor(connection_rnc)
   eigvals_rnc, Q = jnp.linalg.eigh(ricci_rnc.components.value)  # Q rotates RNC to diagonalize Ricci
 
-  # Get the orthonormal frame E that takes standard coords to RNC.
-  # E orthonormalizes g: E^T g E = I
   gij = metric.components.value
-  eigenvalues, eigenvectors = jnp.linalg.eigh(gij)
-  E = jnp.einsum("ij,j->ij", eigenvectors, jax.lax.rsqrt(eigenvalues))
-
-  # Principal Ricci frame: compose E with Q.
-  # dx/ds = E @ Q, where s are principal Ricci coords.
-  # This is still orthonormal: (EQ)^T g (EQ) = Q^T E^T g E Q = Q^T I Q = I
-  dxds = E @ Q
-
-  # Get the transformation from principal Ricci coordinates to the standard basis.
   gamma_bar = connection.christoffel_symbols
-  J_s_to_x = _get_rnc_jacobian(gamma_bar, dxds)
+  # Principal Ricci frame: default eigen frame E right-multiplied by Q (same as E @ Q).
+  J_s_to_x = _get_rnc_jacobian(gamma_bar, gij, frame_rotation=Q)
 
   # Go to the principal Ricci coordinates.
   metric_s = to_riemann_normal_coordinates(metric, J_v_to_x=J_s_to_x)
@@ -2034,16 +2024,11 @@ def test_direct_inverse_jacobian_matches_general_inverse():
   connection = get_levi_civita_connection(metric_std)
   gamma_bar = connection.christoffel_symbols
 
-  # Compute the orthonormal frame
   gij = metric_std.components.value
-  eigenvalues, eigenvectors = jnp.linalg.eigh(gij)
-  dxdv = jnp.einsum("ij,j->ij", eigenvectors, jax.lax.rsqrt(eigenvalues))
 
-  # Compute J_v_to_x using the forward formula
-  J_v_to_x = _get_rnc_jacobian(gamma_bar, dxdv)
+  J_v_to_x = _get_rnc_jacobian(gamma_bar, gij)
 
-  # Compute J_x_to_v using the direct formula
-  J_x_to_v_direct = _get_inverse_rnc_jacobian(gamma_bar, dxdv)
+  J_x_to_v_direct = _get_inverse_rnc_jacobian(gamma_bar, gij)
 
   # Compute J_x_to_v using the general inverse
   J_x_to_v_inverse = J_v_to_x.get_inverse()
@@ -2080,11 +2065,9 @@ def test_direct_inverse_jacobian_different_dimensions():
     gamma_bar = connection.christoffel_symbols
 
     gij = metric_std.components.value
-    eigenvalues, eigenvectors = jnp.linalg.eigh(gij)
-    dxdv = jnp.einsum("ij,j->ij", eigenvectors, jax.lax.rsqrt(eigenvalues))
 
-    J_v_to_x = _get_rnc_jacobian(gamma_bar, dxdv)
-    J_x_to_v_direct = _get_inverse_rnc_jacobian(gamma_bar, dxdv)
+    J_v_to_x = _get_rnc_jacobian(gamma_bar, gij)
+    J_x_to_v_direct = _get_inverse_rnc_jacobian(gamma_bar, gij)
     J_x_to_v_inverse = J_v_to_x.get_inverse()
 
     assert jnp.allclose(J_x_to_v_direct.value, J_x_to_v_inverse.value, atol=1e-10), \
@@ -2114,11 +2097,9 @@ def test_direct_inverse_jacobian_is_inverse_of_forward():
   gamma_bar = connection.christoffel_symbols
 
   gij = metric_std.components.value
-  eigenvalues, eigenvectors = jnp.linalg.eigh(gij)
-  dxdv = jnp.einsum("ij,j->ij", eigenvectors, jax.lax.rsqrt(eigenvalues))
 
-  J_v_to_x = _get_rnc_jacobian(gamma_bar, dxdv)
-  J_x_to_v = _get_inverse_rnc_jacobian(gamma_bar, dxdv)
+  J_v_to_x = _get_rnc_jacobian(gamma_bar, gij)
+  J_x_to_v = _get_inverse_rnc_jacobian(gamma_bar, gij)
 
   # Check that the values are matrix inverses
   product_forward = J_x_to_v.value @ J_v_to_x.value
@@ -2149,10 +2130,8 @@ def test_direct_inverse_jacobian_gradient_symmetry():
   gamma_bar = connection.christoffel_symbols
 
   gij = metric_std.components.value
-  eigenvalues, eigenvectors = jnp.linalg.eigh(gij)
-  dxdv = jnp.einsum("ij,j->ij", eigenvectors, jax.lax.rsqrt(eigenvalues))
 
-  J_x_to_v = _get_inverse_rnc_jacobian(gamma_bar, dxdv)
+  J_x_to_v = _get_inverse_rnc_jacobian(gamma_bar, gij)
 
   # Check symmetry: gradient[i, m, n] should equal gradient[i, n, m]
   gradient_transposed = jnp.transpose(J_x_to_v.gradient, (0, 2, 1))
@@ -2179,10 +2158,8 @@ def test_direct_inverse_jacobian_hessian_symmetry():
   gamma_bar = connection.christoffel_symbols
 
   gij = metric_std.components.value
-  eigenvalues, eigenvectors = jnp.linalg.eigh(gij)
-  dxdv = jnp.einsum("ij,j->ij", eigenvectors, jax.lax.rsqrt(eigenvalues))
 
-  J_x_to_v = _get_inverse_rnc_jacobian(gamma_bar, dxdv)
+  J_x_to_v = _get_inverse_rnc_jacobian(gamma_bar, gij)
 
   # Check all permutations of the last three indices
   hess = J_x_to_v.hessian

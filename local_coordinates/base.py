@@ -1,0 +1,99 @@
+import jax.numpy as jnp
+from typing import Tuple, Union, Any
+import equinox as eqx
+from jaxtyping import PyTree
+from functools import wraps
+import abc
+import jax.tree_util as jtu
+
+__all__ = ["AbstractBatchableObject", "auto_vmap"]
+
+
+def auto_vmap(f):
+  """Decorator that automatically vectorizes methods of AbstractBatchableObject.
+
+  Applies JAX's vmap to methods of objects inheriting from
+  AbstractBatchableObject, handling batched operations without explicit
+  vectorization code. It checks if the object is batched and, if so,
+  applies vmap to the method call.
+
+  Args:
+    f: The method to be vectorized
+
+  Returns:
+    A wrapped function that automatically handles batched inputs
+
+  Example:
+    ```python
+    class MyObject(AbstractBatchableObject):
+      @auto_vmap
+      def compute(self, x):
+        ...
+    ```
+  """
+  @wraps(f)
+  def f_wrapper(self, *args, **kwargs):
+    if self.batch_size:
+      if isinstance(self.batch_size, tuple):
+        axis_size = self.batch_size[0]
+      else:
+        axis_size = self.batch_size
+
+      def get_in_axis(arg):
+        if eqx.is_array(arg):
+          return 0 if arg.ndim > 0 and arg.shape[0] == axis_size else None
+        return None
+
+      in_axes_self = jtu.tree_map(get_in_axis, self)
+      in_axes_args = jtu.tree_map(get_in_axis, args)
+      in_axes_kwargs = jtu.tree_map(get_in_axis, kwargs)
+
+      return eqx.filter_vmap(
+        lambda s, a, k: f_wrapper(s, *a, **k),
+        in_axes=(in_axes_self, in_axes_args, in_axes_kwargs)
+      )(self, args, kwargs)
+    return f(self, *args, **kwargs)
+  return f_wrapper
+
+
+class AbstractBatchableObject(eqx.Module, abc.ABC):
+  """Base class for objects that support batched operations.
+
+  Provides a consistent interface for handling batched computations,
+  including properties and methods to query batch dimensions and
+  perform batch operations. Objects can be treated independently or
+  as batches with the same API, enabling efficient vectorized
+  operations through JAX's vmap.
+  """
+
+  @property
+  @abc.abstractmethod
+  def batch_size(self) -> Union[Tuple[int], int, None]:
+    """Get the batch dimensions of this object.
+
+    Returns:
+      A tuple of the leading dimensions if batched multiple times,
+      an int if batched along a single dimension,
+      or None if not batched.
+    """
+    pass
+
+  @classmethod
+  def zeros_like(cls, other: "AbstractBatchableObject") -> "AbstractBatchableObject":
+    """Create a new instance with the same structure but all arrays zeroed."""
+    params, static = eqx.partition(other, eqx.is_array)
+    zero_params = jtu.tree_map(lambda x: jnp.zeros_like(x), params)
+    return eqx.combine(zero_params, static)
+
+  @property
+  def shape(self) -> PyTree:
+    """Get the shapes of all array parameters in this object."""
+    params, static = eqx.partition(self, eqx.is_array)
+    shapes = jtu.tree_map(lambda x: x.shape, params)
+    return shapes
+
+  def __getitem__(self, idx: Any):
+    """Extract a slice or subset of this batched object."""
+    params, static = eqx.partition(self, eqx.is_array)
+    sliced_params = jtu.tree_map(lambda x: x[idx], params)
+    return eqx.combine(sliced_params, static)

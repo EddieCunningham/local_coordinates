@@ -38,7 +38,7 @@ cd local_coordinates
 pip install -e ".[test]"
 ```
 
-Requires Python 3.12+.
+Requires Python 3.11 or newer.
 
 ## Quick Start
 

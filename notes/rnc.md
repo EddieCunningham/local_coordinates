@@ -26,6 +26,7 @@ $$
 \begin{aligned}
   \frac{\partial g_{ij}}{\partial v^k} &= 0 \\
   \frac{\partial^2 g_{ij}}{\partial v^k \partial v^l} &= \frac{1}{3}R_{kilj} + \frac{1}{3}R_{likj} \\
+  \frac{\partial \Gamma^k_{ij}}{\partial v^l} &= \frac{1}{3}\left(R^k_{ijl} + R^k_{jil}\right) \\
   \frac{\partial^2 \log \det(g)}{\partial v^i \partial v^j} &= -\frac{2}{3}(Rc)_{ij}
 \end{aligned}
 }
@@ -41,7 +42,20 @@ $$
   \frac{\partial^2 x^i}{\partial v^j \partial v^k}
   &= -\bar{\Gamma}_{ab}^i J^a_j J^b_k, \\
   \frac{\partial^3 x^i}{\partial v^a \partial v^b \partial v^c}
-  &= \text{Sym}_{abc}\left(-\frac{\partial \bar{\Gamma}^i_{jk}}{\partial x^m} J^m_a J^j_b J^k_c + 2\bar{\Gamma}^i_{jk} \bar{\Gamma}^j_{mn} J^m_a J^n_b J^k_c\right)
+  &= \text{Sym}_{abc}\left(-\frac{\partial \bar{\Gamma}^i_{jk}}{\partial x^m} J^m_a J^j_b J^k_c + 2\bar{\Gamma}^i_{jk} \bar{\Gamma}^j_{mn} J^m_a J^n_b J^k_c\right), \\
+  \frac{\partial v^i}{\partial x^j}
+  &= K^i_j \quad \text{where } K = J^{-1}, \\
+  \frac{\partial^2 v^i}{\partial x^j \partial x^k}
+  &= K^i_c \bar{\Gamma}^c_{jk}, \\
+  \frac{\partial^3 v^i}{\partial x^j \partial x^k \partial x^l}
+  &= \frac{1}{3} K^i_a \left(
+    \frac{\partial \bar{\Gamma}^a_{jk}}{\partial x^l}
+    + \frac{\partial \bar{\Gamma}^a_{kl}}{\partial x^j}
+    + \frac{\partial \bar{\Gamma}^a_{lj}}{\partial x^k}
+    + \bar{\Gamma}^a_{cl}\bar{\Gamma}^c_{jk}
+    + \bar{\Gamma}^a_{cj}\bar{\Gamma}^c_{kl}
+    + \bar{\Gamma}^a_{ck}\bar{\Gamma}^c_{lj}
+  \right)
 \end{aligned}
 }
 $$
@@ -350,6 +364,107 @@ $$
   &= -\bar{\Gamma}_{ab}^i J^a_j J^b_k, \\
   \frac{\partial^3 x^i}{\partial v^a \partial v^b \partial v^c}
   &= \text{Sym}_{abc}\left(-\frac{\partial \bar{\Gamma}^i_{jk}}{\partial x^m} J^m_a J^j_b J^k_c + 2\bar{\Gamma}^i_{jk} \bar{\Gamma}^j_{mn} J^m_a J^n_b J^k_c\right)
+\end{aligned}
+}
+$$
+
+## Inverse Taylor series expansion
+Now consider the inverse map, $v(x) = E^{-1}\circ \log_p(x)$.  It also has a Taylor expansion around $x=p$:
+$$
+\begin{align}
+  v^i(x) = 0
+  + \sum_{j=1}^n \frac{\partial v^i}{\partial x^j}(x^j - p^j)
+  + \frac{1}{2}\sum_{j,k=1}^n \frac{\partial^2 v^i}{\partial x^j \partial x^k}(x^j - p^j)(x^k - p^k)
+  + \frac{1}{6}\sum_{j,k,l=1}^n \frac{\partial^3 v^i}{\partial x^j \partial x^k \partial x^l}(x^j - p^j)(x^k - p^k)(x^l - p^l)
+  + O(|x-p|^4)
+\end{align}
+$$
+The coefficients are constrained by the composition identity
+$$
+\begin{align}
+  v^i(x(v)) = v^i
+\end{align}
+$$
+which we differentiate repeatedly.
+
+### First order coefficients
+Differentiating once gives
+$$
+\begin{align}
+  \frac{\partial v^i}{\partial x^m}\frac{\partial x^m}{\partial v^a} = \delta^i_a
+\end{align}
+$$
+So if $J^m_a = \frac{\partial x^m}{\partial v^a}$ and $K^i_m = \frac{\partial v^i}{\partial x^m}$, then
+$$
+\begin{align}
+  KJ = I \quad \Longrightarrow \quad K = J^{-1}
+\end{align}
+$$
+
+### Second order coefficients
+Differentiating twice gives
+$$
+\begin{align}
+  \frac{\partial^2 v^i}{\partial x^m \partial x^n}
+  \frac{\partial x^m}{\partial v^a}
+  \frac{\partial x^n}{\partial v^b}
+  + \frac{\partial v^i}{\partial x^m}
+  \frac{\partial^2 x^m}{\partial v^a \partial v^b}
+  = 0
+\end{align}
+$$
+Using
+$$
+\begin{align}
+  \frac{\partial^2 x^m}{\partial v^a \partial v^b}
+  = -\bar{\Gamma}^m_{jk} J^j_a J^k_b
+\end{align}
+$$
+and contracting by $K^a_j K^b_k$, we obtain
+$$
+\begin{align}
+  \frac{\partial^2 v^i}{\partial x^j \partial x^k}
+  = K^i_c \bar{\Gamma}^c_{jk}
+\end{align}
+$$
+
+### Third order coefficients
+Differentiating a third time and substituting the RNC expressions for forward derivatives, the terms split into two groups:
+1. a group from third derivatives of $x(v)$ that contributes $\frac{1}{3}[\partial\Gamma\text{ terms}] - \frac{2}{3}[\Gamma^2\text{ terms}]$
+2. a group from products of second derivatives that contributes $[\Gamma^2\text{ terms}]$
+
+Combining both groups leaves a net $\frac{1}{3}$ factor multiplying both the derivative and quadratic Christoffel terms:
+$$
+\begin{align}
+  \frac{\partial^3 v^i}{\partial x^j \partial x^k \partial x^l}
+  = \frac{1}{3} K^i_a \left(
+    \frac{\partial \bar{\Gamma}^a_{jk}}{\partial x^l}
+    + \frac{\partial \bar{\Gamma}^a_{kl}}{\partial x^j}
+    + \frac{\partial \bar{\Gamma}^a_{lj}}{\partial x^k}
+    + \bar{\Gamma}^a_{cl}\bar{\Gamma}^c_{jk}
+    + \bar{\Gamma}^a_{cj}\bar{\Gamma}^c_{kl}
+    + \bar{\Gamma}^a_{ck}\bar{\Gamma}^c_{lj}
+  \right)
+\end{align}
+$$
+
+So to summarize, for the inverse map $v(x)$:
+$$
+\boxed{
+\begin{aligned}
+  \frac{\partial v^i}{\partial x^j}
+  &= K^i_j, \\
+  \frac{\partial^2 v^i}{\partial x^j \partial x^k}
+  &= K^i_c \bar{\Gamma}^c_{jk}, \\
+  \frac{\partial^3 v^i}{\partial x^j \partial x^k \partial x^l}
+  &= \frac{1}{3} K^i_a \left(
+    \frac{\partial \bar{\Gamma}^a_{jk}}{\partial x^l}
+    + \frac{\partial \bar{\Gamma}^a_{kl}}{\partial x^j}
+    + \frac{\partial \bar{\Gamma}^a_{lj}}{\partial x^k}
+    + \bar{\Gamma}^a_{cl}\bar{\Gamma}^c_{jk}
+    + \bar{\Gamma}^a_{cj}\bar{\Gamma}^c_{kl}
+    + \bar{\Gamma}^a_{ck}\bar{\Gamma}^c_{lj}
+  \right)
 \end{aligned}
 }
 $$

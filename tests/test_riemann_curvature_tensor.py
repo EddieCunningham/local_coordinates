@@ -1,3 +1,4 @@
+import jax
 import jax.numpy as jnp
 from jax import random
 import numpy as np
@@ -5,7 +6,7 @@ import numpy as np
 from local_coordinates.metric import RiemannianMetric, lower_index, pullback_metric
 from local_coordinates.basis import get_standard_basis
 from local_coordinates.jet import function_to_jet
-from local_coordinates.connection import get_levi_civita_connection
+from local_coordinates.connection import get_levi_civita_connection, get_covariant_hessian
 from local_coordinates.riemann import RiemannCurvatureTensor, get_riemann_curvature_tensor, RicciTensor, get_ricci_tensor
 from local_coordinates.basis import BasisVectors
 from local_coordinates.frame import get_lie_bracket_between_frame_pairs, basis_to_frame
@@ -889,3 +890,43 @@ def test_ricci_scalar_pullback_paraboloid():
   _, _, _, _, _, ricci_scalar2 = _pullback_curvature_pipeline(x2, embed, h2)
   assert jnp.isfinite(ricci_scalar2)
   assert not jnp.isnan(ricci_scalar2)
+
+
+# ============================================================================
+# Ricci decomposition identity
+# ============================================================================
+
+def test_ricci_decomposition_identity():
+  """
+  Verify the identity Ric_ij = d_a Gamma^a_ij - Gamma^a_ib Gamma^b_aj - (1/2) nabla^2 log det g.
+  Uses a non-trivial metric in the standard basis so Lie brackets vanish.
+  """
+  jax.config.update("jax_enable_x64", True)
+  dim = 3
+  p = jnp.array([0.3, 0.7, -0.4])
+
+  def metric_fn(x):
+    d = x.shape[0]
+    return jnp.eye(d) + 0.1 * jnp.outer(x, x)
+
+  def log_det_g_fn(x):
+    return jnp.linalg.slogdet(metric_fn(x))[1]
+
+  basis = get_standard_basis(p)
+  metric_jet = function_to_jet(metric_fn, p)
+  metric = RiemannianMetric(basis=basis, components=metric_jet)
+  connection = get_levi_civita_connection(metric)
+
+  ricci = get_ricci_tensor(connection).components.value
+  cov_hess_logdet = get_covariant_hessian(connection, log_det_g_fn).components.value
+
+  gamma_val = connection.christoffel_symbols.value
+  gamma_grad = connection.christoffel_symbols.gradient
+
+  d_gamma = jnp.einsum("ijaa->ij", gamma_grad)
+  gamma_sq = jnp.einsum("iba,ajb->ij", gamma_val, gamma_val)
+
+  rhs = d_gamma - gamma_sq - 0.5 * cov_hess_logdet
+  assert jnp.allclose(ricci, rhs, atol=1e-10), (
+    f"Ricci decomposition identity failed. Max error: {jnp.max(jnp.abs(ricci - rhs))}"
+  )
